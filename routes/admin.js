@@ -244,30 +244,80 @@ router.put('/edits/:id/status', requireAuth, requireMod, async (req, res) => {
 });
 
 // ── GET /api/admin/stats ──────────────────────────────────────────────
-// FIX: Added requireAuth before requireMod
 router.get('/stats', requireAuth, requireMod, async (req, res) => {
   try {
+    // FIX: Use COALESCE to handle NULL values when tables are empty
+    // Also use proper MySQL boolean casting (status = 'PENDING') not (status='PENDING')
     const [[art]]   = await db.query(
-      `SELECT SUM(status='PENDING') AS pending, SUM(status='APPROVED') AS approved,
-              SUM(status='REJECTED') AS rejected, COUNT(*) AS total FROM eu_articles`
-    );
-    const [[users]] = await db.query(
-      `SELECT SUM(role='FREE') AS free, SUM(role='MONTHLY') AS monthly,
-              SUM(role='MOD') AS mod, SUM(role='ADMIN') AS admin,
-              COUNT(*) AS total FROM eu_users`
-    );
-    const [[pay]]   = await db.query(
-      `SELECT SUM(amount) AS revenue, COUNT(*) AS payments
-       FROM eu_payment_history WHERE status='approved'`
-    );
-    const [[edits]] = await db.query(
-      `SELECT SUM(status='PENDING') AS pending, COUNT(*) AS total FROM eu_article_edits`
+      `SELECT
+        COALESCE(SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending,
+        COALESCE(SUM(CASE WHEN status = 'APPROVED' THEN 1 ELSE 0 END), 0) AS approved,
+        COALESCE(SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END), 0) AS rejected,
+        COUNT(*) AS total
+       FROM eu_articles`
     );
 
-    res.json({ articles: art, users, payments: pay, edits });
+    const [[users]] = await db.query(
+      `SELECT
+        COALESCE(SUM(CASE WHEN role = 'FREE' THEN 1 ELSE 0 END), 0) AS free,
+        COALESCE(SUM(CASE WHEN role = 'MONTHLY' THEN 1 ELSE 0 END), 0) AS monthly,
+        COALESCE(SUM(CASE WHEN role = 'MOD' THEN 1 ELSE 0 END), 0) AS mod,
+        COALESCE(SUM(CASE WHEN role = 'ADMIN' THEN 1 ELSE 0 END), 0) AS admin,
+        COUNT(*) AS total
+       FROM eu_users`
+    );
+
+    const [[pay]]   = await db.query(
+      `SELECT
+        COALESCE(SUM(amount), 0) AS revenue,
+        COUNT(*) AS payments
+       FROM eu_payment_history WHERE status='approved'`
+    );
+
+    const [[edits]] = await db.query(
+      `SELECT
+        COALESCE(SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending,
+        COUNT(*) AS total
+       FROM eu_article_edits`
+    );
+
+    // DEBUG LOGGING - remove after fixing
+    console.log('[STATS DEBUG] articles:', art);
+    console.log('[STATS DEBUG] users:', users);
+    console.log('[STATS DEBUG] payments:', pay);
+    console.log('[STATS DEBUG] edits:', edits);
+
+    // FIX: Ensure we never return null/undefined values
+    res.json({
+      articles: {
+        pending: art?.pending ?? 0,
+        approved: art?.approved ?? 0,
+        rejected: art?.rejected ?? 0,
+        total: art?.total ?? 0
+      },
+      users: {
+        free: users?.free ?? 0,
+        monthly: users?.monthly ?? 0,
+        mod: users?.mod ?? 0,
+        admin: users?.admin ?? 0,
+        total: users?.total ?? 0
+      },
+      payments: {
+        total_revenue: pay?.revenue ?? 0,
+        total_payments: pay?.payments ?? 0
+      },
+      edits: {
+        pending: edits?.pending ?? 0,
+        total: edits?.total ?? 0
+      }
+    });
   } catch (err) {
     console.error('GET /admin/stats:', err);
-    res.status(500).json({ error: 'Error al obtener estadísticas' });
+    // FIX: Send detailed error in development
+    res.status(500).json({
+      error: 'Error al obtener estadísticas',
+      details: process.env.NODE_ENV !== 'production' ? err.message : undefined
+    });
   }
 });
 
