@@ -72,7 +72,8 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/articles', require('./routes/articles'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/payments', require('./routes/payments'));
-app.use('/api/media', require('./routes/media'));
+app.use('/api/media',   require('./routes/media'));
+app.use('/api/profile', require('./routes/profile'));
 
 // Sitemap dinámico (SEO)
 app.get('/sitemap.xml', async (req, res) => {
@@ -115,7 +116,7 @@ cron.schedule('0 2 * * *', async () => {
   console.log('🔄 [CRON] Verificando suscripciones expiradas...');
   try {
     const [expired] = await db.query(
-      `SELECT id, username, email, monthly_expires_at FROM eu_users
+      `SELECT id, username, email, monthly_expires_at FROM eu_users 
        WHERE role = 'MONTHLY' AND monthly_expires_at IS NOT NULL AND monthly_expires_at < NOW()`
     );
 
@@ -124,7 +125,7 @@ cron.schedule('0 2 * * *', async () => {
 
       // Registrar en historial
       await db.query(
-        `UPDATE eu_payment_history SET status = 'refunded'
+        `UPDATE eu_payment_history SET status = 'refunded' 
          WHERE user_id = ? AND status = 'approved' AND expires_at < NOW()`,
         [user.id]
       );

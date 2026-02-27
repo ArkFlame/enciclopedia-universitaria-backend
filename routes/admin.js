@@ -1,29 +1,24 @@
 const express = require('express');
-const router = express.Router();
-const fs = require('fs').promises;
-const db = require('../config/db');
+const router  = express.Router();
+const fs      = require('fs').promises;
+const db      = require('../config/db');
 const { requireAuth, requireMod, requireAdmin } = require('../middleware/auth');
-const { processArticleContent } = require('../utils/shortcodeParser');
+const { sanitizeInt, sanitizeString, sanitizeStatus } = require('../utils/sanitize');
 
-// Middleware: todos los endpoints admin requieren auth
-router.use(requireAuth);
-
-// ─── ARTÍCULOS ────────────────────────────────────────────────────
-
-// GET /api/admin/articles - Listar con filtros de estado
+// ── GET /api/admin/articles ─────────────────────────────────────────────
 router.get('/articles', requireMod, async (req, res) => {
   try {
-    const { status = 'PENDING', page = 1, limit = 30 } = req.query;
-    const offset = (Math.max(parseInt(page), 1) - 1) * 30;
-    const validStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'ALL'];
-    const st = validStatuses.includes(status.toUpperCase()) ? status.toUpperCase() : 'PENDING';
+    const st      = sanitizeStatus(req.query.status, ['PENDING','APPROVED','REJECTED','ALL']) || 'PENDING';
+    const page    = sanitizeInt(req.query.page,  1, 9999, 1);
+    const limit   = sanitizeInt(req.query.limit, 1, 100,  30);
+    const offset  = (page - 1) * limit;
 
-    const where = st === 'ALL' ? '' : 'WHERE a.status = ?';
+    const where  = st === 'ALL' ? '' : 'WHERE a.status = ?';
     const params = st === 'ALL' ? [] : [st];
 
     const [rows] = await db.query(
-      `SELECT a.id, a.slug, a.title, a.summary, a.status, a.category, a.created_at, a.updated_at,
-              a.rejection_reason, a.reviewed_at,
+      `SELECT a.id, a.slug, a.title, a.summary, a.status, a.category,
+              a.created_at, a.updated_at, a.rejection_reason, a.reviewed_at,
               u.username AS author_username, u.email AS author_email, u.role AS author_role,
               ru.username AS reviewer_username
        FROM eu_articles a
@@ -31,40 +26,40 @@ router.get('/articles', requireMod, async (req, res) => {
        LEFT JOIN eu_users ru ON a.reviewed_by = ru.id
        ${where}
        ORDER BY a.created_at DESC LIMIT ? OFFSET ?`,
-      [...params, 30, offset]
+      [...params, limit, offset]
     );
 
     const [[{ total }]] = await db.query(
-      `SELECT COUNT(*) AS total FROM eu_articles a ${where}`,
-      params
+      `SELECT COUNT(*) AS total FROM eu_articles a ${where}`, params
     );
 
-    res.json({ articles: rows, total, page: parseInt(page) });
+    res.json({ articles: rows, total, page, pageSize: limit });
   } catch (err) {
-    console.error(err);
+    console.error('GET /admin/articles:', err);
     res.status(500).json({ error: 'Error al obtener artículos' });
   }
 });
 
-// PUT /api/admin/articles/:id/status - Aprobar / Rechazar artículo
+// ── PUT /api/admin/articles/:id/status ────────────────────────────────
 router.put('/articles/:id/status', requireMod, async (req, res) => {
   try {
-    const { status, reason } = req.body;
-    const validStatuses = ['APPROVED', 'REJECTED'];
-    if (!validStatuses.includes(status))
-      return res.status(400).json({ error: 'Estado inválido' });
+    const id     = sanitizeInt(req.params.id, 1, 999999999);
+    const status = sanitizeStatus(req.body.status, ['APPROVED','REJECTED']);
+    const reason = sanitizeString(req.body.reason, 500);
 
-    const [rows] = await db.query('SELECT * FROM eu_articles WHERE id = ?', [req.params.id]);
+    if (!id)     return res.status(400).json({ error: 'ID inválido' });
+    if (!status) return res.status(400).json({ error: 'Estado inválido' });
+
+    const [rows] = await db.query('SELECT * FROM eu_articles WHERE id = ?', [id]);
     if (!rows.length) return res.status(404).json({ error: 'Artículo no encontrado' });
-
     const article = rows[0];
 
     await db.query(
-      `UPDATE eu_articles SET status = ?, reviewed_by = ?, reviewed_at = NOW(), rejection_reason = ? WHERE id = ?`,
-      [status, req.user.id, reason || null, req.params.id]
+      `UPDATE eu_articles SET status = ?, reviewed_by = ?, reviewed_at = NOW(),
+       rejection_reason = ? WHERE id = ?`,
+      [status, req.user.id, reason || null, id]
     );
 
-    // Notificar al autor
     const notifType = status === 'APPROVED' ? 'article_approved' : 'article_rejected';
     const msg = status === 'APPROVED'
       ? `Tu artículo "${article.title}" fue aprobado ✓`
@@ -74,27 +69,33 @@ router.put('/articles/:id/status', requireMod, async (req, res) => {
       'INSERT INTO eu_notifications (user_id, type, message, reference_id) VALUES (?, ?, ?, ?)',
       [article.author_id, notifType, msg, article.id]
     );
-    await db.query('UPDATE eu_users SET notification_count = notification_count + 1 WHERE id = ?', [article.author_id]);
-
-    // Log de admin
+    await db.query(
+      'UPDATE eu_users SET notification_count = notification_count + 1 WHERE id = ?',
+      [article.author_id]
+    );
     await db.query(
       'INSERT INTO eu_admin_logs (admin_id, action, target_type, target_id, details) VALUES (?, ?, ?, ?, ?)',
-      [req.user.id, `article_${status.toLowerCase()}`, 'article', req.params.id, JSON.stringify({ reason })]
+      [req.user.id, `article_${status.toLowerCase()}`, 'article', id, JSON.stringify({ reason })]
     );
 
-    res.json({ message: `Artículo ${status === 'APPROVED' ? 'aprobado' : 'rechazado'} exitosamente` });
+    res.json({ message: `Artículo ${status === 'APPROVED' ? 'aprobado' : 'rechazado'}` });
   } catch (err) {
-    console.error(err);
+    console.error('PUT /admin/articles/:id/status:', err);
     res.status(500).json({ error: 'Error al actualizar estado' });
   }
 });
 
-// ─── EDICIONES ────────────────────────────────────────────────────
-
-// GET /api/admin/edits - Listar ediciones pendientes
+// ── GET /api/admin/edits ───────────────────────────────────────────────
 router.get('/edits', requireMod, async (req, res) => {
   try {
-    const { status = 'PENDING' } = req.query;
+    const st    = sanitizeStatus(req.query.status, ['PENDING','APPROVED','REJECTED','ALL']) || 'PENDING';
+    const page  = sanitizeInt(req.query.page,  1, 9999, 1);
+    const limit = sanitizeInt(req.query.limit, 1, 100,  50);
+    const offset = (page - 1) * limit;
+
+    const where  = st === 'ALL' ? '' : 'WHERE ae.status = ?';
+    const params = st === 'ALL' ? [] : [st];
+
     const [rows] = await db.query(
       `SELECT ae.id, ae.article_id, ae.title, ae.summary, ae.edit_note, ae.status,
               ae.created_at, ae.rejection_reason, ae.reviewed_at,
@@ -105,179 +106,207 @@ router.get('/edits', requireMod, async (req, res) => {
        JOIN eu_articles a ON ae.article_id = a.id
        JOIN eu_users u ON ae.editor_id = u.id
        LEFT JOIN eu_users ru ON ae.reviewed_by = ru.id
-       WHERE ae.status = ?
-       ORDER BY ae.created_at DESC LIMIT 50`,
-      [status]
+       ${where}
+       ORDER BY ae.created_at DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
     );
-    res.json(rows);
+
+    const [[{ total }]] = await db.query(
+      `SELECT COUNT(*) AS total FROM eu_article_edits ae ${where}`, params
+    );
+
+    res.json({ edits: rows, total, page, pageSize: limit });
   } catch (err) {
+    console.error('GET /admin/edits:', err);
     res.status(500).json({ error: 'Error al obtener ediciones' });
   }
 });
 
-// PUT /api/admin/edits/:id/status - Aprobar / Rechazar edición
+// ── GET /api/admin/edit-preview/:editId ───────────────────────────────
+// Returns original content + proposed content side by side
+router.get('/edit-preview/:editId', requireMod, async (req, res) => {
+  try {
+    const editId = sanitizeInt(req.params.editId, 1, 999999999);
+    if (!editId) return res.status(400).json({ error: 'ID inválido' });
+
+    const [rows] = await db.query(
+      `SELECT ae.id, ae.title, ae.summary, ae.edit_note, ae.content_path AS edit_path,
+              ae.status, ae.created_at,
+              a.title AS original_title, a.summary AS original_summary,
+              a.content_path AS original_path, a.slug,
+              u.username AS editor_username
+       FROM eu_article_edits ae
+       JOIN eu_articles a ON ae.article_id = a.id
+       JOIN eu_users u ON ae.editor_id = u.id
+       WHERE ae.id = ?`,
+      [editId]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Edición no encontrada' });
+
+    const edit = rows[0];
+    let originalContent = '', proposedContent = '';
+
+    try { originalContent = await fs.readFile(edit.original_path, 'utf8'); } catch(e) {}
+    try { proposedContent = await fs.readFile(edit.edit_path, 'utf8'); }     catch(e) {}
+
+    res.json({ ...edit, originalContent, proposedContent });
+  } catch (err) {
+    console.error('GET /admin/edit-preview:', err);
+    res.status(500).json({ error: 'Error al cargar previsualización' });
+  }
+});
+
+// ── PUT /api/admin/edits/:id/status ───────────────────────────────────
 router.put('/edits/:id/status', requireMod, async (req, res) => {
   try {
-    const { status, reason } = req.body;
-    if (!['APPROVED', 'REJECTED'].includes(status))
-      return res.status(400).json({ error: 'Estado inválido' });
+    const editId = sanitizeInt(req.params.id, 1, 999999999);
+    const status = sanitizeStatus(req.body.status, ['APPROVED','REJECTED']);
+    const reason = sanitizeString(req.body.reason, 500);
+
+    if (!editId) return res.status(400).json({ error: 'ID inválido' });
+    if (!status) return res.status(400).json({ error: 'Estado inválido' });
 
     const [rows] = await db.query(
       `SELECT ae.*, a.title AS article_title, a.content_path AS original_path
-       FROM eu_article_edits ae JOIN eu_articles a ON ae.article_id = a.id WHERE ae.id = ?`,
-      [req.params.id]
+       FROM eu_article_edits ae
+       JOIN eu_articles a ON ae.article_id = a.id
+       WHERE ae.id = ?`,
+      [editId]
     );
     if (!rows.length) return res.status(404).json({ error: 'Edición no encontrada' });
     const edit = rows[0];
 
+    if (edit.status !== 'PENDING')
+      return res.status(409).json({ error: 'Esta edición ya fue revisada' });
+
     await db.query(
-      'UPDATE eu_article_edits SET status = ?, reviewed_by = ?, reviewed_at = NOW(), rejection_reason = ? WHERE id = ?',
-      [status, req.user.id, reason || null, req.params.id]
+      `UPDATE eu_article_edits SET status = ?, reviewed_by = ?, reviewed_at = NOW(),
+       rejection_reason = ? WHERE id = ?`,
+      [status, req.user.id, reason || null, editId]
     );
 
     if (status === 'APPROVED') {
-      // Aplicar cambios al artículo original
+      // Apply edit to the article
       const updates = {};
-      if (edit.title) updates.title = edit.title;
+      if (edit.title)   updates.title   = edit.title;
       if (edit.summary) updates.summary = edit.summary;
 
       if (edit.content_path) {
-        // Copiar contenido de la edición al archivo original del artículo
-        const editContent = await fs.readFile(edit.content_path, 'utf8');
-        await fs.writeFile(edit.original_path, editContent, 'utf8');
+        try {
+          const proposed = await fs.readFile(edit.content_path, 'utf8');
+          await fs.writeFile(edit.original_path, proposed, 'utf8');
+        } catch(e) {
+          console.error('Failed to copy edit content to article:', e);
+        }
       }
 
-      const setClause = Object.keys(updates).map(k => `${k} = ?`).join(', ');
-      if (setClause) {
+      if (Object.keys(updates).length) {
+        const setClauses = Object.keys(updates).map(k => `${k} = ?`).join(', ');
         await db.query(
-          `UPDATE eu_articles SET ${setClause}, version = version + 1, updated_at = NOW() WHERE id = ?`,
+          `UPDATE eu_articles SET ${setClauses}, version = version + 1, updated_at = NOW() WHERE id = ?`,
           [...Object.values(updates), edit.article_id]
         );
       } else {
-        await db.query('UPDATE eu_articles SET version = version + 1, updated_at = NOW() WHERE id = ?', [edit.article_id]);
+        await db.query(
+          'UPDATE eu_articles SET version = version + 1, updated_at = NOW() WHERE id = ?',
+          [edit.article_id]
+        );
       }
     }
 
-    // Notificar al editor
+    // Notify editor
     const msg = status === 'APPROVED'
-      ? `Tu edición en "${edit.article_title}" fue aprobada ✓`
+      ? `Tu edición en "${edit.article_title}" fue aprobada y publicada ✓`
       : `Tu edición en "${edit.article_title}" fue rechazada. Motivo: ${reason || 'Sin especificar'}`;
 
     await db.query(
       'INSERT INTO eu_notifications (user_id, type, message, reference_id) VALUES (?, ?, ?, ?)',
       [edit.editor_id, status === 'APPROVED' ? 'edit_approved' : 'edit_rejected', msg, edit.article_id]
     );
-    await db.query('UPDATE eu_users SET notification_count = notification_count + 1 WHERE id = ?', [edit.editor_id]);
-
+    await db.query(
+      'UPDATE eu_users SET notification_count = notification_count + 1 WHERE id = ?',
+      [edit.editor_id]
+    );
     await db.query(
       'INSERT INTO eu_admin_logs (admin_id, action, target_type, target_id) VALUES (?, ?, ?, ?)',
-      [req.user.id, `edit_${status.toLowerCase()}`, 'edit', req.params.id]
+      [req.user.id, `edit_${status.toLowerCase()}`, 'edit', editId]
     );
 
-    res.json({ message: `Edición ${status === 'APPROVED' ? 'aprobada' : 'rechazada'}` });
+    res.json({ message: `Edición ${status === 'APPROVED' ? 'aprobada y aplicada' : 'rechazada'}` });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error al procesar edición' });
+    console.error('PUT /admin/edits/:id/status:', err);
+    res.status(500).json({ error: 'Error al actualizar edición' });
   }
 });
 
-// ─── USUARIOS ─────────────────────────────────────────────────────
-
-// GET /api/admin/users - Listar usuarios
-router.get('/users', requireAdmin, async (req, res) => {
-  try {
-    const { query, role, page = 1 } = req.query;
-    const offset = (Math.max(parseInt(page), 1) - 1) * 30;
-    let conditions = [];
-    let params = [];
-
-    if (query) {
-      conditions.push('(username LIKE ? OR email LIKE ?)');
-      params.push(`%${query}%`, `%${query}%`);
-    }
-    if (role) {
-      conditions.push('role = ?');
-      params.push(role);
-    }
-
-    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-    const [rows] = await db.query(
-      `SELECT id, username, email, role, created_at, paid_at, monthly_expires_at, role_assigned_at,
-              articles_read_this_month
-       FROM eu_users ${where} ORDER BY created_at DESC LIMIT 30 OFFSET ?`,
-      [...params, offset]
-    );
-    const [[{ total }]] = await db.query(`SELECT COUNT(*) AS total FROM eu_users ${where}`, params);
-    res.json({ users: rows, total });
-  } catch (err) {
-    res.status(500).json({ error: 'Error al obtener usuarios' });
-  }
-});
-
-// GET /api/admin/stats - Estadísticas del panel
+// ── GET /api/admin/stats ──────────────────────────────────────────────
 router.get('/stats', requireMod, async (req, res) => {
   try {
-    const [[artStats]] = await db.query(
-      `SELECT
-        SUM(status = 'PENDING') AS pending,
-        SUM(status = 'APPROVED') AS approved,
-        SUM(status = 'REJECTED') AS rejected,
-        COUNT(*) AS total
-       FROM eu_articles`
+    const [[art]]   = await db.query(
+      `SELECT SUM(status='PENDING') AS pending, SUM(status='APPROVED') AS approved,
+              SUM(status='REJECTED') AS rejected, COUNT(*) AS total FROM eu_articles`
     );
-    const [[editStats]] = await db.query(
-      `SELECT SUM(status = 'PENDING') AS pending, COUNT(*) AS total FROM eu_article_edits`
+    const [[users]] = await db.query(
+      `SELECT SUM(role='FREE') AS free, SUM(role='MONTHLY') AS monthly,
+              SUM(role='MOD') AS mod, SUM(role='ADMIN') AS admin,
+              COUNT(*) AS total FROM eu_users`
     );
-    const [[userStats]] = await db.query(
-      `SELECT
-        SUM(role = 'FREE') AS free_users,
-        SUM(role = 'MONTHLY') AS monthly_users,
-        SUM(role = 'MOD') AS mod_users,
-        SUM(role = 'ADMIN') AS admin_users,
-        COUNT(*) AS total
-       FROM eu_users`
+    const [[pay]]   = await db.query(
+      `SELECT SUM(amount) AS revenue, COUNT(*) AS payments
+       FROM eu_payment_history WHERE status='approved'`
     );
-    const [[payStats]] = await db.query(
-      `SELECT SUM(amount) AS total_revenue, COUNT(*) AS total_payments
-       FROM eu_payment_history WHERE status = 'approved'`
+    const [[edits]] = await db.query(
+      `SELECT SUM(status='PENDING') AS pending, COUNT(*) AS total FROM eu_article_edits`
     );
 
-    res.json({
-      articles: artStats,
-      edits: editStats,
-      users: userStats,
-      payments: payStats
-    });
+    res.json({ articles: art, users, payments: pay, edits });
   } catch (err) {
+    console.error('GET /admin/stats:', err);
     res.status(500).json({ error: 'Error al obtener estadísticas' });
   }
 });
 
-// GET /api/admin/logs - Logs de administración
-router.get('/logs', requireAdmin, async (req, res) => {
+// ── GET /api/admin/users ──────────────────────────────────────────────
+router.get('/users', requireAdmin, async (req, res) => {
   try {
+    const page   = sanitizeInt(req.query.page,  1, 9999, 1);
+    const limit  = sanitizeInt(req.query.limit, 1, 100,  50);
+    const offset = (page - 1) * limit;
+
     const [rows] = await db.query(
-      `SELECT al.*, u.username AS admin_username
-       FROM eu_admin_logs al JOIN eu_users u ON al.admin_id = u.id
-       ORDER BY al.created_at DESC LIMIT 100`
+      `SELECT id, username, email, role, created_at, monthly_expires_at,
+              articles_read_this_month, notification_count
+       FROM eu_users ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [limit, offset]
     );
-    res.json(rows);
+    const [[{ total }]] = await db.query('SELECT COUNT(*) AS total FROM eu_users');
+
+    res.json({ users: rows, total, page, pageSize: limit });
   } catch (err) {
-    res.status(500).json({ error: 'Error al obtener logs' });
+    console.error('GET /admin/users:', err);
+    res.status(500).json({ error: 'Error al obtener usuarios' });
   }
 });
 
-// GET /api/admin/edit-preview/:editId - Preview de una edición
-router.get('/edit-preview/:editId', requireMod, async (req, res) => {
+// ── GET /api/admin/logs ───────────────────────────────────────────────
+router.get('/logs', requireAdmin, async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT content_path FROM eu_article_edits WHERE id = ?', [req.params.editId]);
-    if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
+    const page   = sanitizeInt(req.query.page,  1, 9999, 1);
+    const limit  = sanitizeInt(req.query.limit, 1, 100,  50);
+    const offset = (page - 1) * limit;
 
-    const content = await fs.readFile(rows[0].content_path, 'utf8');
-    const html = await processArticleContent(content);
-    res.json({ html, markdown: content });
+    const [rows] = await db.query(
+      `SELECT al.id, al.action, al.target_type, al.target_id, al.details, al.created_at,
+              u.username AS admin_username
+       FROM eu_admin_logs al
+       JOIN eu_users u ON al.admin_id = u.id
+       ORDER BY al.created_at DESC LIMIT ? OFFSET ?`,
+      [limit, offset]
+    );
+    res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: 'Error al generar preview' });
+    console.error('GET /admin/logs:', err);
+    res.status(500).json({ error: 'Error al obtener logs' });
   }
 });
 

@@ -4,11 +4,14 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const { requireAuth } = require('../middleware/auth');
+const { sanitizeString, sanitizeEmail } = require('../utils/sanitize');
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const username = sanitizeString(req.body.username, 50);
+    const email    = sanitizeEmail(req.body.email);
+    const password = req.body.password || '';
 
     if (!username || !email || !password)
       return res.status(400).json({ error: 'Todos los campos son obligatorios' });
@@ -53,7 +56,8 @@ router.post('/register', async (req, res) => {
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email    = sanitizeEmail(req.body.email);
+    const password = req.body.password || '';
     if (!email || !password)
       return res.status(400).json({ error: 'Email y contraseña son obligatorios' });
 

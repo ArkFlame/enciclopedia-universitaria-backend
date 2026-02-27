@@ -1,11 +1,15 @@
-const express = require('express');
-const router = express.Router();
-const fs = require('fs').promises;
-const path = require('path');
-const db = require('../config/db');
-const { requireAuth, optionalAuth, requireMod } = require('../middleware/auth');
-const { checkRateLimit } = require('../middleware/rateLimit');
-const { processArticleContent } = require('../utils/shortcodeParser');
+const express  = require('express');
+const router   = express.Router();
+const fs       = require('fs').promises;
+const path     = require('path');
+const db       = require('../config/db');
+const { requireAuth, optionalAuth } = require('../middleware/auth');
+const { checkRateLimit }            = require('../middleware/rateLimit');
+const { processArticleContent }     = require('../utils/shortcodeParser');
+const {
+  sanitizeSearchQuery, sanitizeString, sanitizeInt,
+  sanitizeSlug, sanitizeStatus, sanitizeContent
+} = require('../utils/sanitize');
 
 const STORAGE = process.env.STORAGE_PATH || path.join(__dirname, '../storage');
 
@@ -22,28 +26,36 @@ async function ensureDir(dir) {
   await fs.mkdir(dir, { recursive: true });
 }
 
-// GET /api/articles - Listar artículos
+// ── GET /api/articles — List articles ──────────────────────────────────
 router.get('/', optionalAuth, async (req, res) => {
   try {
-    const { query, status, category, page = 1, limit = 20, includePending } = req.query;
-    const offset = (Math.max(parseInt(page), 1) - 1) * Math.min(parseInt(limit), 50);
-    const pageSize = Math.min(parseInt(limit) || 20, 50);
+    const rawQuery    = req.query.query    || req.query.q || '';
+    const rawCategory = req.query.category || '';
+    const rawPage     = req.query.page;
+    const rawLimit    = req.query.limit;
+    const includePending = req.query.includePending === 'true';
 
-    let conditions = [];
-    let params = [];
+    // Sanitize all inputs
+    const searchQuery = sanitizeSearchQuery(rawQuery);
+    const category    = sanitizeString(rawCategory, 100);
+    const page        = sanitizeInt(rawPage, 1, 9999, 1);
+    const pageSize    = sanitizeInt(rawLimit, 1, 50, 20);
+    const offset      = (page - 1) * pageSize;
 
-    // Control de visibilidad
-    if (status === 'approved' || (!status && includePending !== 'true')) {
-      conditions.push('a.status = "APPROVED"');
-    } else if (includePending === 'true') {
+    const conditions = [];
+    const params     = [];
+
+    // Visibility
+    if (includePending) {
       conditions.push('a.status IN ("APPROVED","PENDING")');
     } else {
       conditions.push('a.status = "APPROVED"');
     }
 
-    if (query && query.trim()) {
+    // Full-text search — uses sanitized query
+    if (searchQuery) {
       conditions.push('MATCH(a.title, a.summary) AGAINST(? IN BOOLEAN MODE)');
-      params.push(`${query.trim()}*`);
+      params.push(searchQuery);
     }
 
     if (category) {
@@ -51,7 +63,7 @@ router.get('/', optionalAuth, async (req, res) => {
       params.push(category);
     }
 
-    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+    const where = 'WHERE ' + conditions.join(' AND ');
 
     const [rows] = await db.query(
       `SELECT a.id, a.slug, a.title, a.summary, a.status, a.category, a.tags,
@@ -71,21 +83,59 @@ router.get('/', optionalAuth, async (req, res) => {
       params
     );
 
-    res.json({ articles: rows, total, page: parseInt(page), pageSize });
+    res.json({ articles: rows, total, page, pageSize });
   } catch (err) {
-    console.error(err);
+    console.error('GET /api/articles error:', err);
     res.status(500).json({ error: 'Error al obtener artículos' });
   }
 });
 
-// GET /api/articles/:slug - Artículo individual
+// ── GET /api/articles/meta/categories ──────────────────────────────────
+// MUST be before /:slug to avoid route conflict
+router.get('/meta/categories', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM eu_categories ORDER BY name');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener categorías' });
+  }
+});
+
+// ── GET /api/articles/by-id/:id/content — Raw markdown (for editor) ────
+router.get('/by-id/:id/content', requireAuth, async (req, res) => {
+  try {
+    const id = sanitizeInt(req.params.id, 1, 999999999);
+    if (!id) return res.status(400).json({ error: 'ID inválido' });
+
+    const [rows] = await db.query(
+      'SELECT content_path, author_id FROM eu_articles WHERE id = ?', [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Artículo no encontrado' });
+
+    const article = rows[0];
+    const isMod   = ['MOD', 'ADMIN'].includes(req.user.role);
+    if (!isMod && article.author_id !== req.user.id)
+      return res.status(403).json({ error: 'Acceso denegado' });
+
+    const content = await fs.readFile(article.content_path, 'utf8');
+    res.json({ content });
+  } catch (err) {
+    console.error('GET /by-id/content error:', err);
+    res.status(500).json({ error: 'Error al leer contenido' });
+  }
+});
+
+// ── GET /api/articles/:slug — Single article ───────────────────────────
 router.get('/:slug', optionalAuth, async (req, res) => {
   try {
-    const { slug } = req.params;
-    const { includePending } = req.query;
+    const slug          = sanitizeSlug(req.params.slug);
+    const includePending = req.query.includePending === 'true';
 
-    let statusFilter = 'a.status = "APPROVED"';
-    if (includePending === 'true') statusFilter = 'a.status IN ("APPROVED","PENDING")';
+    if (!slug) return res.status(400).json({ error: 'Slug inválido' });
+
+    const statusFilter = includePending
+      ? 'a.status IN ("APPROVED","PENDING")'
+      : 'a.status = "APPROVED"';
 
     const [rows] = await db.query(
       `SELECT a.id, a.slug, a.title, a.summary, a.content_path, a.status,
@@ -103,14 +153,11 @@ router.get('/:slug', optionalAuth, async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Artículo no encontrado' });
 
     const article = rows[0];
-
-    // Control de lecturas para FREE
+    const FREE_LIMIT = sanitizeInt(process.env.FREE_ARTICLES_PER_MONTH, 1, 9999, 30);
     let limitReached = false;
-    const FREE_LIMIT = parseInt(process.env.FREE_ARTICLES_PER_MONTH) || 5;
 
     if (req.user) {
       const user = req.user;
-      // Reset mensual
       const resetDate = new Date(user.articles_read_reset_at);
       const now = new Date();
       if (now.getMonth() !== resetDate.getMonth() || now.getFullYear() !== resetDate.getFullYear()) {
@@ -120,7 +167,6 @@ router.get('/:slug', optionalAuth, async (req, res) => {
         );
         user.articles_read_this_month = 0;
       }
-
       if (user.role === 'FREE' && user.articles_read_this_month >= FREE_LIMIT) {
         limitReached = true;
       } else if (user.role === 'FREE') {
@@ -129,12 +175,8 @@ router.get('/:slug', optionalAuth, async (req, res) => {
           [user.id]
         );
       }
-    } else {
-      // Usuario no logueado: usar cookie/sesión rudimentaria - simplemente avisar del límite
-      // En producción se podría usar fingerprinting o solicitar login
     }
 
-    // Leer contenido del archivo Markdown
     let rawContent = '';
     try {
       rawContent = await fs.readFile(article.content_path, 'utf8');
@@ -142,19 +184,14 @@ router.get('/:slug', optionalAuth, async (req, res) => {
       rawContent = '*Contenido no disponible temporalmente.*';
     }
 
-    // Procesar shortcodes + markdown
     const htmlContent = await processArticleContent(rawContent);
-
-    // Incrementar vistas
     await db.query('UPDATE eu_articles SET views = views + 1 WHERE id = ?', [article.id]);
 
-    // Obtener imágenes del artículo
     const [media] = await db.query(
       'SELECT id, filename, public_url, width, height FROM eu_media WHERE article_id = ? ORDER BY created_at',
       [article.id]
     );
 
-    // Artículos relacionados
     const [related] = await db.query(
       `SELECT slug, title, summary FROM eu_articles
        WHERE category = ? AND slug != ? AND status = "APPROVED"
@@ -171,80 +208,79 @@ router.get('/:slug', optionalAuth, async (req, res) => {
       related
     });
   } catch (err) {
-    console.error(err);
+    console.error('GET /api/articles/:slug error:', err);
     res.status(500).json({ error: 'Error al obtener artículo' });
   }
 });
 
-// POST /api/articles - Crear artículo (requiere auth + rate limit)
+// ── POST /api/articles — Create article ────────────────────────────────
 router.post('/', requireAuth, checkRateLimit('submit_article'), async (req, res) => {
   try {
-    const { title, summary, content, category, tags } = req.body;
+    const title    = sanitizeString(req.body.title,   500);
+    const summary  = sanitizeString(req.body.summary, 2000);
+    const content  = sanitizeContent(req.body.content);
+    const category = sanitizeString(req.body.category, 100);
+    const tags     = Array.isArray(req.body.tags)
+      ? req.body.tags.map(t => sanitizeString(t, 50)).filter(Boolean).slice(0, 20)
+      : [];
 
-    if (!title?.trim() || !summary?.trim() || !content?.trim())
-      return res.status(400).json({ error: 'Título, resumen y contenido son obligatorios' });
-
-    if (title.length > 500) return res.status(400).json({ error: 'El título es demasiado largo' });
-    if (summary.length > 2000) return res.status(400).json({ error: 'El resumen es demasiado largo' });
+    if (!title)   return res.status(400).json({ error: 'El título es obligatorio' });
+    if (!summary) return res.status(400).json({ error: 'El resumen es obligatorio' });
+    if (!content) return res.status(400).json({ error: 'El contenido es obligatorio' });
 
     let slug = slugify(title);
-
-    // Verificar slug único
     const [existing] = await db.query('SELECT id FROM eu_articles WHERE slug = ?', [slug]);
     if (existing.length) slug = `${slug}-${Date.now()}`;
 
-    // Crear directorio de almacenamiento
-    const articleDir = path.join(STORAGE, 'articles', slug);
+    const articleDir  = path.join(STORAGE, 'articles', slug);
     await ensureDir(articleDir);
-
     const contentPath = path.join(articleDir, 'content.md');
     await fs.writeFile(contentPath, content, 'utf8');
 
     const [result] = await db.query(
       `INSERT INTO eu_articles (slug, title, summary, content_path, author_id, status, category, tags)
        VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
-      [slug, title.trim(), summary.trim(), contentPath, req.user.id, category || null, tags ? JSON.stringify(tags) : null]
+      [slug, title, summary, contentPath, req.user.id,
+       category || null, tags.length ? JSON.stringify(tags) : null]
     );
 
-    // Notificar admins/mods
+    // Notify mods/admins
     const [admins] = await db.query('SELECT id FROM eu_users WHERE role IN ("ADMIN","MOD")');
     for (const admin of admins) {
       await db.query(
         `INSERT INTO eu_notifications (user_id, type, message, reference_id) VALUES (?, 'new_submission', ?, ?)`,
-        [admin.id, `Nuevo artículo pendiente de revisión: "${title.trim()}"`, result.insertId]
+        [admin.id, `Nuevo artículo pendiente: "${title}"`, result.insertId]
       );
     }
-    await db.query(
-      'UPDATE eu_users SET notification_count = notification_count + 1 WHERE role IN ("ADMIN","MOD")'
-    );
+    await db.query('UPDATE eu_users SET notification_count = notification_count + 1 WHERE role IN ("ADMIN","MOD")');
 
-    res.status(201).json({
-      message: 'Artículo enviado. Quedará pendiente de aprobación.',
-      articleId: result.insertId,
-      slug
-    });
+    res.status(201).json({ message: 'Artículo enviado. Quedará pendiente de aprobación.', articleId: result.insertId, slug });
   } catch (err) {
-    console.error(err);
+    console.error('POST /api/articles error:', err);
     res.status(500).json({ error: 'Error al crear artículo' });
   }
 });
 
-// POST /api/articles/:id/edit - Proponer edición
+// ── POST /api/articles/:id/edit — Propose an edit ──────────────────────
 router.post('/:id/edit', requireAuth, checkRateLimit('edit_article'), async (req, res) => {
   try {
-    const { title, summary, content, editNote } = req.body;
-    const articleId = req.params.id;
+    const articleId = sanitizeInt(req.params.id, 1, 999999999);
+    if (!articleId) return res.status(400).json({ error: 'ID inválido' });
+
+    const title    = sanitizeString(req.body.title,   500);
+    const summary  = sanitizeString(req.body.summary, 2000);
+    const content  = sanitizeContent(req.body.content);
+    const editNote = sanitizeString(req.body.editNote, 1000);
+
+    if (!content) return res.status(400).json({ error: 'El contenido de la edición es obligatorio' });
 
     const [artRows] = await db.query('SELECT * FROM eu_articles WHERE id = ?', [articleId]);
     if (!artRows.length) return res.status(404).json({ error: 'Artículo no encontrado' });
 
-    const article = artRows[0];
-
-    // Guardar edición en disco
-    const editDir = path.join(STORAGE, 'revisions', String(articleId));
+    const editDir  = path.join(STORAGE, 'revisions', String(articleId));
     await ensureDir(editDir);
     const editPath = path.join(editDir, `${Date.now()}_${req.user.id}.md`);
-    await fs.writeFile(editPath, content || '', 'utf8');
+    await fs.writeFile(editPath, content, 'utf8');
 
     const [result] = await db.query(
       `INSERT INTO eu_article_edits (article_id, editor_id, title, summary, content_path, edit_note, status)
@@ -252,38 +288,25 @@ router.post('/:id/edit', requireAuth, checkRateLimit('edit_article'), async (req
       [articleId, req.user.id, title || null, summary || null, editPath, editNote || null]
     );
 
+    // Notify mods/admins
+    const article = artRows[0];
+    const [admins] = await db.query('SELECT id FROM eu_users WHERE role IN ("ADMIN","MOD")');
+    for (const admin of admins) {
+      await db.query(
+        `INSERT INTO eu_notifications (user_id, type, message, reference_id) VALUES (?, 'new_submission', ?, ?)`,
+        [admin.id, `Nueva edición pendiente en: "${article.title}"`, articleId]
+      );
+    }
+    await db.query('UPDATE eu_users SET notification_count = notification_count + 1 WHERE role IN ("ADMIN","MOD")');
+
     res.status(201).json({
-      message: 'Edición enviada. Quedará pendiente de aprobación por un moderador.',
+      message: 'Edición enviada. Un moderador la revisará antes de publicarla.',
       editId: result.insertId
     });
   } catch (err) {
-    console.error(err);
+    console.error('POST /api/articles/:id/edit error:', err);
     res.status(500).json({ error: 'Error al enviar edición' });
   }
-});
-
-// GET /api/articles/by-id/:id/content - Obtener markdown raw (para editor)
-router.get('/by-id/:id/content', requireAuth, async (req, res) => {
-  try {
-    const [rows] = await db.query('SELECT content_path, author_id FROM eu_articles WHERE id = ?', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
-
-    const article = rows[0];
-    const isMod = ['MOD', 'ADMIN'].includes(req.user.role);
-    if (!isMod && article.author_id !== req.user.id)
-      return res.status(403).json({ error: 'Acceso denegado' });
-
-    const content = await fs.readFile(article.content_path, 'utf8');
-    res.json({ content });
-  } catch (err) {
-    res.status(500).json({ error: 'Error al leer contenido' });
-  }
-});
-
-// GET /api/articles/categories
-router.get('/meta/categories', async (req, res) => {
-  const [rows] = await db.query('SELECT * FROM eu_categories ORDER BY name');
-  res.json(rows);
 });
 
 module.exports = router;
