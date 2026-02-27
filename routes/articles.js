@@ -1,0 +1,289 @@
+const express = require('express');
+const router = express.Router();
+const fs = require('fs').promises;
+const path = require('path');
+const db = require('../config/db');
+const { requireAuth, optionalAuth, requireMod } = require('../middleware/auth');
+const { checkRateLimit } = require('../middleware/rateLimit');
+const { processArticleContent } = require('../utils/shortcodeParser');
+
+const STORAGE = process.env.STORAGE_PATH || path.join(__dirname, '../storage');
+
+function slugify(text) {
+  return text.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 100);
+}
+
+async function ensureDir(dir) {
+  await fs.mkdir(dir, { recursive: true });
+}
+
+// GET /api/articles - Listar artículos
+router.get('/', optionalAuth, async (req, res) => {
+  try {
+    const { query, status, category, page = 1, limit = 20, includePending } = req.query;
+    const offset = (Math.max(parseInt(page), 1) - 1) * Math.min(parseInt(limit), 50);
+    const pageSize = Math.min(parseInt(limit) || 20, 50);
+
+    let conditions = [];
+    let params = [];
+
+    // Control de visibilidad
+    if (status === 'approved' || (!status && includePending !== 'true')) {
+      conditions.push('a.status = "APPROVED"');
+    } else if (includePending === 'true') {
+      conditions.push('a.status IN ("APPROVED","PENDING")');
+    } else {
+      conditions.push('a.status = "APPROVED"');
+    }
+
+    if (query && query.trim()) {
+      conditions.push('MATCH(a.title, a.summary) AGAINST(? IN BOOLEAN MODE)');
+      params.push(`${query.trim()}*`);
+    }
+
+    if (category) {
+      conditions.push('a.category = ?');
+      params.push(category);
+    }
+
+    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    const [rows] = await db.query(
+      `SELECT a.id, a.slug, a.title, a.summary, a.status, a.category, a.tags,
+              a.views, a.created_at, a.updated_at,
+              u.username AS author_username,
+              (SELECT COUNT(*) FROM eu_media m WHERE m.article_id = a.id) AS image_count
+       FROM eu_articles a
+       JOIN eu_users u ON a.author_id = u.id
+       ${where}
+       ORDER BY a.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+
+    const [[{ total }]] = await db.query(
+      `SELECT COUNT(*) AS total FROM eu_articles a ${where}`,
+      params
+    );
+
+    res.json({ articles: rows, total, page: parseInt(page), pageSize });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener artículos' });
+  }
+});
+
+// GET /api/articles/:slug - Artículo individual
+router.get('/:slug', optionalAuth, async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const { includePending } = req.query;
+
+    let statusFilter = 'a.status = "APPROVED"';
+    if (includePending === 'true') statusFilter = 'a.status IN ("APPROVED","PENDING")';
+
+    const [rows] = await db.query(
+      `SELECT a.id, a.slug, a.title, a.summary, a.content_path, a.status,
+              a.category, a.tags, a.views, a.version, a.created_at, a.updated_at,
+              a.rejection_reason,
+              u.username AS author_username, u.id AS author_id,
+              ru.username AS reviewer_username, a.reviewed_at
+       FROM eu_articles a
+       JOIN eu_users u ON a.author_id = u.id
+       LEFT JOIN eu_users ru ON a.reviewed_by = ru.id
+       WHERE a.slug = ? AND ${statusFilter}`,
+      [slug]
+    );
+
+    if (!rows.length) return res.status(404).json({ error: 'Artículo no encontrado' });
+
+    const article = rows[0];
+
+    // Control de lecturas para FREE
+    let limitReached = false;
+    const FREE_LIMIT = parseInt(process.env.FREE_ARTICLES_PER_MONTH) || 5;
+
+    if (req.user) {
+      const user = req.user;
+      // Reset mensual
+      const resetDate = new Date(user.articles_read_reset_at);
+      const now = new Date();
+      if (now.getMonth() !== resetDate.getMonth() || now.getFullYear() !== resetDate.getFullYear()) {
+        await db.query(
+          'UPDATE eu_users SET articles_read_this_month = 0, articles_read_reset_at = NOW() WHERE id = ?',
+          [user.id]
+        );
+        user.articles_read_this_month = 0;
+      }
+
+      if (user.role === 'FREE' && user.articles_read_this_month >= FREE_LIMIT) {
+        limitReached = true;
+      } else if (user.role === 'FREE') {
+        await db.query(
+          'UPDATE eu_users SET articles_read_this_month = articles_read_this_month + 1 WHERE id = ?',
+          [user.id]
+        );
+      }
+    } else {
+      // Usuario no logueado: usar cookie/sesión rudimentaria - simplemente avisar del límite
+      // En producción se podría usar fingerprinting o solicitar login
+    }
+
+    // Leer contenido del archivo Markdown
+    let rawContent = '';
+    try {
+      rawContent = await fs.readFile(article.content_path, 'utf8');
+    } catch (e) {
+      rawContent = '*Contenido no disponible temporalmente.*';
+    }
+
+    // Procesar shortcodes + markdown
+    const htmlContent = await processArticleContent(rawContent);
+
+    // Incrementar vistas
+    await db.query('UPDATE eu_articles SET views = views + 1 WHERE id = ?', [article.id]);
+
+    // Obtener imágenes del artículo
+    const [media] = await db.query(
+      'SELECT id, filename, public_url, width, height FROM eu_media WHERE article_id = ? ORDER BY created_at',
+      [article.id]
+    );
+
+    // Artículos relacionados
+    const [related] = await db.query(
+      `SELECT slug, title, summary FROM eu_articles
+       WHERE category = ? AND slug != ? AND status = "APPROVED"
+       ORDER BY views DESC LIMIT 5`,
+      [article.category || '', slug]
+    );
+
+    res.json({
+      ...article,
+      htmlContent: limitReached ? null : htmlContent,
+      limitReached,
+      freeLimit: FREE_LIMIT,
+      media,
+      related
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener artículo' });
+  }
+});
+
+// POST /api/articles - Crear artículo (requiere auth + rate limit)
+router.post('/', requireAuth, checkRateLimit('submit_article'), async (req, res) => {
+  try {
+    const { title, summary, content, category, tags } = req.body;
+
+    if (!title?.trim() || !summary?.trim() || !content?.trim())
+      return res.status(400).json({ error: 'Título, resumen y contenido son obligatorios' });
+
+    if (title.length > 500) return res.status(400).json({ error: 'El título es demasiado largo' });
+    if (summary.length > 2000) return res.status(400).json({ error: 'El resumen es demasiado largo' });
+
+    let slug = slugify(title);
+
+    // Verificar slug único
+    const [existing] = await db.query('SELECT id FROM eu_articles WHERE slug = ?', [slug]);
+    if (existing.length) slug = `${slug}-${Date.now()}`;
+
+    // Crear directorio de almacenamiento
+    const articleDir = path.join(STORAGE, 'articles', slug);
+    await ensureDir(articleDir);
+
+    const contentPath = path.join(articleDir, 'content.md');
+    await fs.writeFile(contentPath, content, 'utf8');
+
+    const [result] = await db.query(
+      `INSERT INTO eu_articles (slug, title, summary, content_path, author_id, status, category, tags)
+       VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+      [slug, title.trim(), summary.trim(), contentPath, req.user.id, category || null, tags ? JSON.stringify(tags) : null]
+    );
+
+    // Notificar admins/mods
+    const [admins] = await db.query('SELECT id FROM eu_users WHERE role IN ("ADMIN","MOD")');
+    for (const admin of admins) {
+      await db.query(
+        `INSERT INTO eu_notifications (user_id, type, message, reference_id) VALUES (?, 'new_submission', ?, ?)`,
+        [admin.id, `Nuevo artículo pendiente de revisión: "${title.trim()}"`, result.insertId]
+      );
+    }
+    await db.query(
+      'UPDATE eu_users SET notification_count = notification_count + 1 WHERE role IN ("ADMIN","MOD")'
+    );
+
+    res.status(201).json({
+      message: 'Artículo enviado. Quedará pendiente de aprobación.',
+      articleId: result.insertId,
+      slug
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al crear artículo' });
+  }
+});
+
+// POST /api/articles/:id/edit - Proponer edición
+router.post('/:id/edit', requireAuth, checkRateLimit('edit_article'), async (req, res) => {
+  try {
+    const { title, summary, content, editNote } = req.body;
+    const articleId = req.params.id;
+
+    const [artRows] = await db.query('SELECT * FROM eu_articles WHERE id = ?', [articleId]);
+    if (!artRows.length) return res.status(404).json({ error: 'Artículo no encontrado' });
+
+    const article = artRows[0];
+
+    // Guardar edición en disco
+    const editDir = path.join(STORAGE, 'revisions', String(articleId));
+    await ensureDir(editDir);
+    const editPath = path.join(editDir, `${Date.now()}_${req.user.id}.md`);
+    await fs.writeFile(editPath, content || '', 'utf8');
+
+    const [result] = await db.query(
+      `INSERT INTO eu_article_edits (article_id, editor_id, title, summary, content_path, edit_note, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'PENDING')`,
+      [articleId, req.user.id, title || null, summary || null, editPath, editNote || null]
+    );
+
+    res.status(201).json({
+      message: 'Edición enviada. Quedará pendiente de aprobación por un moderador.',
+      editId: result.insertId
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al enviar edición' });
+  }
+});
+
+// GET /api/articles/by-id/:id/content - Obtener markdown raw (para editor)
+router.get('/by-id/:id/content', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT content_path, author_id FROM eu_articles WHERE id = ?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
+
+    const article = rows[0];
+    const isMod = ['MOD', 'ADMIN'].includes(req.user.role);
+    if (!isMod && article.author_id !== req.user.id)
+      return res.status(403).json({ error: 'Acceso denegado' });
+
+    const content = await fs.readFile(article.content_path, 'utf8');
+    res.json({ content });
+  } catch (err) {
+    res.status(500).json({ error: 'Error al leer contenido' });
+  }
+});
+
+// GET /api/articles/categories
+router.get('/meta/categories', async (req, res) => {
+  const [rows] = await db.query('SELECT * FROM eu_categories ORDER BY name');
+  res.json(rows);
+});
+
+module.exports = router;
