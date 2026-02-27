@@ -2,11 +2,12 @@ const express = require('express');
 const router  = express.Router();
 const fs      = require('fs').promises;
 const db      = require('../config/db');
-const { requireAuth, requireMod, requireAdmin } = require('../middleware/auth');
+const { requireAuth, requireMod, requireAdmin } = require('../middleware/auth'); // Added requireAuth
 const { sanitizeInt, sanitizeString, sanitizeStatus } = require('../utils/sanitize');
 
 // ── GET /api/admin/articles ─────────────────────────────────────────────
-router.get('/articles', requireMod, async (req, res) => {
+// FIX: Added requireAuth before requireMod
+router.get('/articles', requireAuth, requireMod, async (req, res) => {
   try {
     const st      = sanitizeStatus(req.query.status, ['PENDING','APPROVED','REJECTED','ALL']) || 'PENDING';
     const page    = sanitizeInt(req.query.page,  1, 9999, 1);
@@ -41,7 +42,8 @@ router.get('/articles', requireMod, async (req, res) => {
 });
 
 // ── PUT /api/admin/articles/:id/status ────────────────────────────────
-router.put('/articles/:id/status', requireMod, async (req, res) => {
+// FIX: Added requireAuth before requireMod
+router.put('/articles/:id/status', requireAuth, requireMod, async (req, res) => {
   try {
     const id     = sanitizeInt(req.params.id, 1, 999999999);
     const status = sanitizeStatus(req.body.status, ['APPROVED','REJECTED']);
@@ -86,7 +88,8 @@ router.put('/articles/:id/status', requireMod, async (req, res) => {
 });
 
 // ── GET /api/admin/edits ───────────────────────────────────────────────
-router.get('/edits', requireMod, async (req, res) => {
+// FIX: Added requireAuth before requireMod
+router.get('/edits', requireAuth, requireMod, async (req, res) => {
   try {
     const st    = sanitizeStatus(req.query.status, ['PENDING','APPROVED','REJECTED','ALL']) || 'PENDING';
     const page  = sanitizeInt(req.query.page,  1, 9999, 1);
@@ -123,8 +126,8 @@ router.get('/edits', requireMod, async (req, res) => {
 });
 
 // ── GET /api/admin/edit-preview/:editId ───────────────────────────────
-// Returns original content + proposed content side by side
-router.get('/edit-preview/:editId', requireMod, async (req, res) => {
+// FIX: Added requireAuth before requireMod
+router.get('/edit-preview/:editId', requireAuth, requireMod, async (req, res) => {
   try {
     const editId = sanitizeInt(req.params.editId, 1, 999999999);
     if (!editId) return res.status(400).json({ error: 'ID inválido' });
@@ -157,7 +160,8 @@ router.get('/edit-preview/:editId', requireMod, async (req, res) => {
 });
 
 // ── PUT /api/admin/edits/:id/status ───────────────────────────────────
-router.put('/edits/:id/status', requireMod, async (req, res) => {
+// FIX: Added requireAuth before requireMod
+router.put('/edits/:id/status', requireAuth, requireMod, async (req, res) => {
   try {
     const editId = sanitizeInt(req.params.id, 1, 999999999);
     const status = sanitizeStatus(req.body.status, ['APPROVED','REJECTED']);
@@ -240,7 +244,8 @@ router.put('/edits/:id/status', requireMod, async (req, res) => {
 });
 
 // ── GET /api/admin/stats ──────────────────────────────────────────────
-router.get('/stats', requireMod, async (req, res) => {
+// FIX: Added requireAuth before requireMod
+router.get('/stats', requireAuth, requireMod, async (req, res) => {
   try {
     const [[art]]   = await db.query(
       `SELECT SUM(status='PENDING') AS pending, SUM(status='APPROVED') AS approved,
@@ -267,7 +272,8 @@ router.get('/stats', requireMod, async (req, res) => {
 });
 
 // ── GET /api/admin/users ──────────────────────────────────────────────
-router.get('/users', requireAdmin, async (req, res) => {
+// FIX: Added requireAuth before requireAdmin
+router.get('/users', requireAuth, requireAdmin, async (req, res) => {
   try {
     const page   = sanitizeInt(req.query.page,  1, 9999, 1);
     const limit  = sanitizeInt(req.query.limit, 1, 100,  50);
@@ -289,7 +295,8 @@ router.get('/users', requireAdmin, async (req, res) => {
 });
 
 // ── GET /api/admin/logs ───────────────────────────────────────────────
-router.get('/logs', requireAdmin, async (req, res) => {
+// FIX: Added requireAuth before requireAdmin
+router.get('/logs', requireAuth, requireAdmin, async (req, res) => {
   try {
     const page   = sanitizeInt(req.query.page,  1, 9999, 1);
     const limit  = sanitizeInt(req.query.limit, 1, 100,  50);
