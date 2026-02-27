@@ -246,8 +246,6 @@ router.put('/edits/:id/status', requireAuth, requireMod, async (req, res) => {
 // ── GET /api/admin/stats ──────────────────────────────────────────────
 router.get('/stats', requireAuth, requireMod, async (req, res) => {
   try {
-    // FIX: Use COALESCE to handle NULL values when tables are empty
-    // Also use proper MySQL boolean casting (status = 'PENDING') not (status='PENDING')
     const [[art]]   = await db.query(
       `SELECT
         COALESCE(SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending,
@@ -261,7 +259,7 @@ router.get('/stats', requireAuth, requireMod, async (req, res) => {
       `SELECT
         COALESCE(SUM(CASE WHEN role = 'FREE' THEN 1 ELSE 0 END), 0) AS free,
         COALESCE(SUM(CASE WHEN role = 'MONTHLY' THEN 1 ELSE 0 END), 0) AS monthly,
-        COALESCE(SUM(CASE WHEN role = 'MOD' THEN 1 ELSE 0 END), 0) AS mod,
+        COALESCE(SUM(CASE WHEN role = 'MOD' THEN 1 ELSE 0 END), 0) AS mod_users,
         COALESCE(SUM(CASE WHEN role = 'ADMIN' THEN 1 ELSE 0 END), 0) AS admin,
         COUNT(*) AS total
        FROM eu_users`
@@ -281,13 +279,6 @@ router.get('/stats', requireAuth, requireMod, async (req, res) => {
        FROM eu_article_edits`
     );
 
-    // DEBUG LOGGING - remove after fixing
-    console.log('[STATS DEBUG] articles:', art);
-    console.log('[STATS DEBUG] users:', users);
-    console.log('[STATS DEBUG] payments:', pay);
-    console.log('[STATS DEBUG] edits:', edits);
-
-    // FIX: Ensure we never return null/undefined values
     res.json({
       articles: {
         pending: art?.pending ?? 0,
@@ -298,7 +289,7 @@ router.get('/stats', requireAuth, requireMod, async (req, res) => {
       users: {
         free: users?.free ?? 0,
         monthly: users?.monthly ?? 0,
-        mod: users?.mod ?? 0,
+        mod: users?.mod_users ?? 0,  // Changed from mod to mod_users
         admin: users?.admin ?? 0,
         total: users?.total ?? 0
       },
@@ -313,7 +304,6 @@ router.get('/stats', requireAuth, requireMod, async (req, res) => {
     });
   } catch (err) {
     console.error('GET /admin/stats:', err);
-    // FIX: Send detailed error in development
     res.status(500).json({
       error: 'Error al obtener estadísticas',
       details: process.env.NODE_ENV !== 'production' ? err.message : undefined
