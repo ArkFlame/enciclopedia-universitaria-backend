@@ -192,6 +192,12 @@ router.get('/:slug', optionalAuth, async (req, res) => {
       [article.id]
     );
 
+    const [sources] = await db.query(
+      `SELECT id, type, title, url, pdf_original_name, pdf_size, favicon_url 
+       FROM eu_article_sources WHERE article_id = ? ORDER BY display_order ASC, created_at ASC`,
+      [article.id]
+    );
+
     const [related] = await db.query(
       `SELECT slug, title, summary FROM eu_articles
        WHERE category = ? AND slug != ? AND status = "APPROVED"
@@ -205,6 +211,7 @@ router.get('/:slug', optionalAuth, async (req, res) => {
       limitReached,
       freeLimit: FREE_LIMIT,
       media,
+      sources,
       related
     });
   } catch (err) {

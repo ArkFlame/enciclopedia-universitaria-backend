@@ -12,6 +12,7 @@ const { checkRateLimit } = require('../middleware/rateLimit');
 const STORAGE = process.env.STORAGE_PATH || path.join(__dirname, '../storage');
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3594';
 const MAX_SIZE = parseInt(process.env.MAX_IMAGE_SIZE) || 5 * 1024 * 1024; // 5MB
+const MAX_IMAGES_PER_ARTICLE = 20;
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -30,6 +31,25 @@ router.post('/upload', requireAuth, checkRateLimit('upload_image'), upload.array
 
     if (!req.files || !req.files.length)
       return res.status(400).json({ error: 'No se recibieron imágenes' });
+
+    // Check image limit per article if articleId provided
+    if (articleId) {
+      const [[{ count }]] = await db.query(
+        'SELECT COUNT(*) AS count FROM eu_media WHERE article_id = ?',
+        [articleId]
+      );
+      if (count >= MAX_IMAGES_PER_ARTICLE) {
+        return res.status(400).json({ 
+          error: `Límite de ${MAX_IMAGES_PER_ARTICLE} imágenes alcanzado para este artículo` 
+        });
+      }
+      // Check if adding new images would exceed limit
+      if (count + req.files.length > MAX_IMAGES_PER_ARTICLE) {
+        return res.status(400).json({ 
+          error: `Solo puedes subir ${MAX_IMAGES_PER_ARTICLE - count} imagen(es) más. Límite: ${MAX_IMAGES_PER_ARTICLE}` 
+        });
+      }
+    }
 
     const results = [];
 
@@ -51,10 +71,10 @@ router.post('/upload', requireAuth, checkRateLimit('upload_image'), upload.array
       const publicUrl = `${BASE_URL}/media/${articleId || 'temp'}/${filename}`;
 
       const [result] = await db.query(
-        `INSERT INTO eu_media (article_id, uploader_id, filename, original_name, mime_type, size_bytes, width, height, file_path, public_url)
-         VALUES (?, ?, ?, ?, 'image/webp', ?, ?, ?, ?, ?)`,
+        `INSERT INTO eu_media (article_id, uploader_id, filename, original_name, mime_type, size_bytes, width, height, file_path, public_url, file_size)
+         VALUES (?, ?, ?, ?, 'image/webp', ?, ?, ?, ?, ?, ?)`,
         [articleId, req.user.id, filename, file.originalname, stat.size,
-         metadata.width, metadata.height, filePath, publicUrl]
+         metadata.width, metadata.height, filePath, publicUrl, stat.size]
       );
 
       results.push({

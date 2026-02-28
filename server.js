@@ -70,6 +70,7 @@ app.use('/media', express.static(path.join(STORAGE, 'images'), {
 // ─── RUTAS API ───────────────────────────────────────────────────
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/articles', require('./routes/articles'));
+app.use('/api/sources', require('./routes/sources'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/media',   require('./routes/media'));

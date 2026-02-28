@@ -40,10 +40,14 @@ const PURIFY_CONFIG = {
  * [/tabs]
  * [accordion title="Título"]Contenido desplegable[/accordion]
  * [highlight color="yellow"]texto destacado[/highlight]
- * [interactive-diagram title="Diagrama"]
- *   [cell label="Núcleo" article="nucleo" x="50" y="50" color="#ff6b6b"]Descripción del núcleo[/cell]
- *   [cell label="Mitocondria" article="mitocondria" x="70" y="30" color="#4ecdc4"]Descripción[/cell]
- * [/interactive-diagram]
+ * [cuadro-sinoptico main="Título Principal" main_color="#f59e0b"]
+ *   [etapa title="ETAPA 1" color="#fbbf24"]Descripción de la etapa 1[/etapa]
+ *   [etapa title="ETAPA 2" color="#10b981"]Descripción de la etapa 2[/etapa]
+ *   [etapa title="ETAPA 3" color="#8b5cf6"]Descripción de la etapa 3[/etapa]
+ *   [etapa title="ETAPA 4" color="#06b6d4"]Descripción de la etapa 4[/etapa]
+ *   [etapa title="ETAPA 5" color="#84cc16"]Descripción de la etapa 5[/etapa]
+ * [/cuadro-sinoptico]
+ * [img file="hero.jpg" alt="Descripción" caption="Pie de foto"]
  * [image src="ruta/img.jpg" alt="descripción" caption="Pie de foto"]
  * [alert type="info|warning|danger|success"]Mensaje[/alert]
  * [callout icon="🔬"]Nota científica importante[/callout]
@@ -87,7 +91,18 @@ function parseShortcodes(text) {
     return `<div class="eu-formula" style="text-align:center;font-family:'Times New Roman',serif;font-size:1.2em;padding:12px;background:var(--eu-code-bg);border-radius:8px;margin:12px 0">\\(${math.trim()}\\)</div>`;
   });
 
-  // [image src="..." alt="..." caption="..."]
+  // [img file="filename" alt="..." caption="..." width="800"]
+  result = result.replace(/\[img\s+file="([^"]+)"(?:\s+alt="([^"]*)")?(?:\s+caption="([^"]*)")?(?:\s+width="(\d+)")?\]/gi, (_, file, alt, caption, width) => {
+    const safeAlt = escapeAttr(alt || '');
+    const style = width ? `style="max-width:${escapeAttr(width)}px"` : '';
+    const img = `<img src="${escapeAttr(file)}" alt="${safeAlt}" class="img-fluid rounded eu-article-img" loading="lazy" ${style}>`;
+    if (caption) {
+      return `<figure class="eu-figure text-center my-3">${img}<figcaption class="eu-caption text-muted mt-1">${escapeHtml(caption)}</figcaption></figure>`;
+    }
+    return `<div class="text-center my-3">${img}</div>`;
+  });
+
+  // [image src="..." alt="..." caption="..."] (legacy)
   result = result.replace(/\[image\s+src="([^"]+)"(?:\s+alt="([^"]*)")?(?:\s+caption="([^"]*)")?\]/gi, (_, src, alt, caption) => {
     const safeAlt = escapeAttr(alt || '');
     const img = `<img src="${escapeAttr(src)}" alt="${safeAlt}" class="img-fluid rounded eu-article-img" loading="lazy">`;
@@ -95,6 +110,107 @@ function parseShortcodes(text) {
       return `<figure class="eu-figure text-center my-3">${img}<figcaption class="eu-caption text-muted mt-1">${escapeHtml(caption)}</figcaption></figure>`;
     }
     return `<div class="text-center my-3">${img}</div>`;
+  });
+
+  // [youtube id="VIDEO_ID"]
+  result = result.replace(/\[youtube\s+id="([A-Za-z0-9_\-]{11})"\]/gi, (_, id) => {
+    return `<div class="eu-video-wrapper ratio ratio-16x9 my-3"><iframe src="https://www.youtube.com/embed/${id}" allowfullscreen loading="lazy" title="Video de YouTube"></iframe></div>`;
+  });
+
+  // [cuadro-sinoptico main="..." main_color="..."]...[etapa title="..." color="..."]...[/etapa]...[/cuadro-sinoptico]
+  result = result.replace(/\[cuadro-sinoptico\s+main="([^"]+)"(?:\s+main_color="([^"]+)")?\]([\s\S]*?)\[\/cuadro-sinoptico\]/gi, (_, mainTitle, mainColor, content) => {
+    const etapaRegex = /\[etapa\s+title="([^"]+)"(?:\s+color="([^"]+)")?\]([\s\S]*?)\[\/etapa\]/gi;
+    let etapas = [];
+    let match;
+    const diagramaId = `eu-cuadro-${Date.now()}`;
+    
+    while ((match = etapaRegex.exec(content)) !== null) {
+      etapas.push({
+        title: match[1].trim(),
+        color: match[2] || '#3b82f6',
+        description: match[3].trim()
+      });
+    }
+    
+    if (etapas.length === 0) return '';
+    
+    const color = mainColor || '#f59e0b';
+    const etapasHtml = etapas.map((e, i) => `
+      <div class="etapa flex items-center gap-8">
+        <div class="min-w-[210px] px-7 py-5 rounded-3xl font-bold text-xl shadow-md text-center" 
+             style="background:${e.color};color:${getContrastColor(e.color)}">
+          ${escapeHtml(e.title)}
+        </div>
+        <div class="flex-1 bg-white border border-gray-200 p-6 rounded-3xl shadow text-base leading-relaxed" style="background:var(--eu-bg);color:var(--eu-text)">
+          ${e.description}
+        </div>
+      </div>
+    `).join('');
+    
+    return `<div class="eu-cuadro-sinoptico my-5" id="${diagramaId}">
+      <div class="relative max-w-6xl mx-auto px-6">
+        <!-- Caja principal -->
+        <div class="absolute left-8 top-1/2 -translate-y-1/2 shadow-2xl w-80 py-10 px-8 rounded-3xl text-center z-20" 
+             style="background:${color};color:${getContrastColor(color)}">
+          <h2 class="font-black text-3xl leading-tight" style="color:${getContrastColor(color)}">${escapeHtml(mainTitle)}</h2>
+        </div>
+        
+        <!-- Etapas -->
+        <div class="ml-96 space-y-12 pt-12">
+          ${etapasHtml}
+        </div>
+        
+        <!-- SVG líneas conexión -->
+        <svg class="absolute top-0 left-0 w-full h-full pointer-events-none z-10" style="overflow:visible">
+          <defs>
+            <marker id="arrowhead-${diagramaId}" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+              <polygon points="0 0, 10 3.5, 0 7" fill="#475569"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+      <p class="text-center text-muted mt-4" style="font-size:0.75rem">Cuadro Sinóptico - ${mainTitle}</p>
+    </div>`;
+  });
+
+  // Legacy: keep interactive-diagram but deprecate
+  result = result.replace(/\[interactive-diagram(?:\s+title="([^"]+)")?\]([\s\S]*?)\[\/interactive-diagram\]/gi, (_, title, cellsContent) => {
+    const cellRegex = /\[cell\s+label="([^"]+)"\s+article="([^"]*)"\s+x="(\d+)"\s+y="(\d+)"(?:\s+color="([^"]*)")?\]([\s\S]*?)\[\/cell\]/gi;
+    let cells = [];
+    let cellMatch;
+    while ((cellMatch = cellRegex.exec(cellsContent)) !== null) {
+      cells.push({
+        label: cellMatch[1],
+        article: cellMatch[2],
+        x: Math.min(Math.max(parseInt(cellMatch[3]), 0), 95),
+        y: Math.min(Math.max(parseInt(cellMatch[4]), 0), 95),
+        color: cellMatch[5] || '#3b82f6',
+        description: cellMatch[6].trim()
+      });
+    }
+    const diagramId = `eu-diag-${Date.now()}`;
+    const titleHtml = title ? `<h6 class="eu-diagram-title text-center mb-2">${escapeHtml(title)}</h6>` : '';
+    const cellsHtml = cells.map((c, i) => {
+      const articleLink = c.article
+        ? `<a href="/articulo.html?slug=${escapeAttr(c.article)}" class="btn btn-sm btn-dark mt-2">Ver artículo ↗</a>`
+        : '';
+      return `<button class="eu-diagram-cell" 
+        style="left:${c.x}%;top:${c.y}%;background:${escapeAttr(c.color)}"
+        data-cell-id="${diagramId}-cell-${i}"
+        aria-label="${escapeAttr(c.label)}"
+      >${escapeHtml(c.label)}</button>
+      <div class="eu-cell-popup" id="${diagramId}-cell-${i}" role="tooltip">
+        <strong>${escapeHtml(c.label)}</strong>
+        <div class="eu-cell-desc">${c.description}</div>
+        ${articleLink}
+      </div>`;
+    }).join('');
+
+    return `<div class="eu-interactive-diagram" id="${diagramId}">
+      ${titleHtml}
+      <div class="eu-diagram-canvas">${cellsHtml}</div>
+      <p class="text-muted text-center mt-1" style="font-size:0.75rem">Haz clic en cada elemento para más información</p>
+    </div>`;
   });
 
   // [youtube id="VIDEO_ID"]
@@ -254,6 +370,18 @@ function escapeHtml(str) {
   return String(str || '').replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
+}
+
+/**
+ * Get contrast color (black or white) for text on colored background
+ */
+function getContrastColor(hexColor) {
+  const hex = hexColor.replace('#', '');
+  const r = parseInt(hex.substr(0, 2), 16);
+  const g = parseInt(hex.substr(2, 2), 16);
+  const b = parseInt(hex.substr(4, 2), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.5 ? '#1f2937' : '#ffffff';
 }
 
 module.exports = { parseShortcodes, processArticleContent };

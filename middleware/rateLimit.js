@@ -2,30 +2,38 @@ const db = require('../config/db');
 
 const LIMITS = {
   FREE: {
-    submit_article: 1,   // por hora
+    submit_article: 1,    // por hora
     edit_article: 1,
-    upload_image: 3
+    upload_image: 3,
+    upload_pdf: 2,
+    download_pdf: 10
   },
   MONTHLY: {
     submit_article: 10,
     edit_article: 10,
-    upload_image: 20
+    upload_image: 20,
+    upload_pdf: 10,
+    download_pdf: 50
   },
   MOD: {
     submit_article: 50,
     edit_article: 50,
-    upload_image: 100
+    upload_image: 100,
+    upload_pdf: 50,
+    download_pdf: 200
   },
   ADMIN: {
     submit_article: 999,
     edit_article: 999,
-    upload_image: 999
+    upload_image: 999,
+    upload_pdf: 999,
+    download_pdf: 999
   }
 };
 
 /**
  * Verifica y registra rate limit por acción.
- * action: 'submit_article' | 'edit_article' | 'upload_image'
+ * action: 'submit_article' | 'edit_article' | 'upload_image' | 'upload_pdf' | 'download_pdf'
  */
 const checkRateLimit = (action) => async (req, res, next) => {
   const userId = req.user?.id || null;
