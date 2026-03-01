@@ -38,7 +38,7 @@ async function getSourceCounts(articleId) {
 // ============================================================
 // GET /api/articles/:id/sources - Get all sources for article
 // ============================================================
-router.get('/articles/:id/sources', async (req, res) => {
+router.get('/:id/sources', async (req, res) => {
   try {
     const articleId = parseInt(req.params.id);
     if (!articleId) {
@@ -79,7 +79,7 @@ router.get('/articles/:id/sources', async (req, res) => {
 // ============================================================
 // POST /api/articles/:id/sources - Add new source (link or PDF)
 // ============================================================
-router.post('/articles/:id/sources', requireAuth, checkRateLimit('upload_pdf'), async (req, res) => {
+router.post('/:id/sources', requireAuth, checkRateLimit('upload_pdf'), async (req, res) => {
   try {
     const articleId = parseInt(req.params.id);
     if (!articleId) {
@@ -202,7 +202,7 @@ const pdfUpload = multer({
   }
 });
 
-router.post('/articles/:id/sources/pdf', 
+router.post('/:id/sources/pdf', 
   requireAuth, 
   checkRateLimit('upload_pdf'),
   pdfUpload.single('pdf'),
@@ -370,7 +370,7 @@ router.get('/sources/pdf/:sourceId', async (req, res) => {
 // ============================================================
 // PUT /api/articles/:id/sources/:sourceId - Update source
 // ============================================================
-router.put('/articles/:id/sources/:sourceId', requireAuth, async (req, res) => {
+router.put('/:id/sources/:sourceId', requireAuth, async (req, res) => {
   try {
     const articleId = parseInt(req.params.id);
     const sourceId = parseInt(req.params.sourceId);
@@ -441,7 +441,7 @@ router.put('/articles/:id/sources/:sourceId', requireAuth, async (req, res) => {
 // ============================================================
 // DELETE /api/articles/:id/sources/:sourceId - Delete source
 // ============================================================
-router.delete('/articles/:id/sources/:sourceId', requireAuth, async (req, res) => {
+router.delete('/:id/sources/:sourceId', requireAuth, async (req, res) => {
   try {
     const articleId = parseInt(req.params.id);
     const sourceId = parseInt(req.params.sourceId);
@@ -508,7 +508,7 @@ router.delete('/articles/:id/sources/:sourceId', requireAuth, async (req, res) =
 // ============================================================
 // Reorder sources
 // ============================================================
-router.put('/articles/:id/sources/reorder', requireAuth, async (req, res) => {
+router.put('/:id/sources/reorder', requireAuth, async (req, res) => {
   try {
     const articleId = parseInt(req.params.id);
     const { sourceIds } = req.body; // Array of source IDs in new order

@@ -68,9 +68,13 @@ app.use('/media', express.static(path.join(STORAGE, 'images'), {
 }));
 
 // ─── RUTAS API ───────────────────────────────────────────────────
+const articlesRouter = require('./routes/articles');
+const sourcesRoutes = require('./routes/sources');
+
 app.use('/api/auth', require('./routes/auth'));
-app.use('/api/articles', require('./routes/articles'));
-app.use('/api/sources', require('./routes/sources'));
+app.use('/api/articles', articlesRouter);
+app.use('/api/articles', sourcesRoutes.router);
+app.get('/api/sources/pdf/:sourceId', sourcesRoutes.downloadPdf);
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/media',   require('./routes/media'));
