@@ -107,6 +107,36 @@ router.get('/article/:articleId', async (req, res) => {
   }
 });
 
+// DELETE /api/media/:mediaId - Delete an image
+router.delete('/:mediaId', requireAuth, async (req, res) => {
+  try {
+    const mediaId = parseInt(req.params.mediaId);
+    if (!mediaId) return res.status(400).json({ error: 'ID inválido' });
+
+    const [[row]] = await db.query(
+      'SELECT * FROM eu_media WHERE id = ?', [mediaId]
+    );
+    if (!row) return res.status(404).json({ error: 'Imagen no encontrada' });
+
+    // Permission: uploader or mod/admin
+    const isMod = ['MOD', 'ADMIN'].includes(req.user.role);
+    if (row.uploader_id !== req.user.id && !isMod) {
+      return res.status(403).json({ error: 'Sin permiso para eliminar esta imagen' });
+    }
+
+    // Delete file from disk
+    try { await fs.unlink(row.file_path); } catch (e) { /* file may already be gone */ }
+
+    // Delete from DB
+    await db.query('DELETE FROM eu_media WHERE id = ?', [mediaId]);
+
+    res.json({ message: 'Imagen eliminada' });
+  } catch (err) {
+    console.error('DELETE /media/:id error:', err);
+    res.status(500).json({ error: 'Error al eliminar imagen' });
+  }
+});
+
 // Servir archivos estáticos (para cuando no hay CDN)
 // En producción, configura nginx para /media
 router.get('/:articleId/:filename', async (req, res) => {

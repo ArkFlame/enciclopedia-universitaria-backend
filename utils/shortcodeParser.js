@@ -6,7 +6,6 @@
 
 const { JSDOM } = require('jsdom');
 const createDOMPurify = require('dompurify');
-const shortcodeProcessor = require('./shortcodes/ShortcodeProcessor');
 
 const window = new JSDOM('').window;
 const DOMPurify = createDOMPurify(window);
@@ -23,7 +22,7 @@ const PURIFY_CONFIG = {
   FORBID_TAGS: ['script','iframe','object','embed','form','input','button','select','textarea'],
   FORBID_ATTR: ['onerror','onclick','onload','onmouseover','onfocus','onblur','onchange','onsubmit'],
   ALLOW_DATA_ATTR: true,
-  ADD_ATTR: ['data-bs-toggle','data-bs-target','data-bs-dismiss','data-article-ref']
+  ADD_ATTR: ['data-bs-toggle','data-bs-target','data-bs-dismiss','data-article-ref','data-mermaid']
 };
 
 /**
@@ -57,7 +56,7 @@ const PURIFY_CONFIG = {
  */
 
 function parseShortcodes(text) {
-  let result = shortcodeProcessor.process(text || '');
+  let result = text;
 
   // [source-ref title="Título de la fuente"] - inline citation
   let sourceRefCounter = 0;
@@ -65,6 +64,16 @@ function parseShortcodes(text) {
     sourceRefCounter++;
     const n = sourceRefCounter;
     return `<sup class="eu-source-ref" title="${escapeAttr(title)}" style="cursor:help">[${n}]</sup>`;
+  });
+
+  // [tooltip text="..."]...[/tooltip]
+  result = result.replace(/\[tooltip\s+text="([^"]+)"\]([\s\S]*?)\[\/tooltip\]/gi, (_, tip, content) => {
+    return `<span class="eu-tooltip" data-bs-toggle="tooltip" data-bs-placement="top" title="${escapeAttr(tip)}" style="border-bottom:1px dashed #666;cursor:help">${content.trim()}</span>`;
+  });
+
+  // [ref article="slug"]Texto[/ref]
+  result = result.replace(/\[ref\s+article="([^"]+)"\]([\s\S]*?)\[\/ref\]/gi, (_, slug, content) => {
+    return `<a href="/articulo.html?slug=${escapeAttr(slug)}" class="eu-article-ref" data-article-ref="${escapeAttr(slug)}">${content.trim()} <sup>↗</sup></a>`;
   });
 
   // [highlight color="..."]...[/highlight]
@@ -101,104 +110,77 @@ function parseShortcodes(text) {
     return `<div class="text-center my-3">${img}</div>`;
   });
 
+  // [image src="..." alt="..." caption="..."] (legacy)
+  result = result.replace(/\[image\s+src="([^"]+)"(?:\s+alt="([^"]*)")?(?:\s+caption="([^"]*)")?\]/gi, (_, src, alt, caption) => {
+    const safeAlt = escapeAttr(alt || '');
+    const img = `<img src="${escapeAttr(src)}" alt="${safeAlt}" class="img-fluid rounded eu-article-img" loading="lazy">`;
+    if (caption) {
+      return `<figure class="eu-figure text-center my-3">${img}<figcaption class="eu-caption text-muted mt-1">${escapeHtml(caption)}</figcaption></figure>`;
+    }
+    return `<div class="text-center my-3">${img}</div>`;
+  });
+
   // [youtube id="VIDEO_ID"]
   result = result.replace(/\[youtube\s+id="([A-Za-z0-9_\-]{11})"\]/gi, (_, id) => {
     return `<div class="eu-video-wrapper ratio ratio-16x9 my-3"><iframe src="https://www.youtube.com/embed/${id}" allowfullscreen loading="lazy" title="Video de YouTube"></iframe></div>`;
   });
 
-  // [cuadro-sinoptico main="..." main_color="..."]...[etapa title="..." color="..."]...[/etapa]...[/cuadro-sinoptico]
-  result = result.replace(/\[cuadro-sinoptico\s+main="([^"]+)"(?:\s+main_color="([^"]+)")?\]([\s\S]*?)\[\/cuadro-sinoptico\]/gi, (_, mainTitle, mainColor, content) => {
-    const etapaRegex = /\[etapa\s+title="([^"]+)"(?:\s+color="([^"]+)")?\]([\s\S]*?)\[\/etapa\]/gi;
-    let etapas = [];
-    let match;
-    const diagramaId = `eu-cuadro-${Date.now()}`;
-    
-    while ((match = etapaRegex.exec(content)) !== null) {
-      etapas.push({
-        title: match[1].trim(),
-        color: match[2] || '#3b82f6',
-        description: match[3].trim()
-      });
-    }
-    
-    if (etapas.length === 0) return '';
-    
-    const color = mainColor || '#f59e0b';
-    const etapasHtml = etapas.map((e, i) => `
-      <div class="etapa flex items-center gap-8">
-        <div class="min-w-[210px] px-7 py-5 rounded-3xl font-bold text-xl shadow-md text-center" 
-             style="background:${e.color};color:${getContrastColor(e.color)}">
-          ${escapeHtml(e.title)}
-        </div>
-        <div class="flex-1 bg-white border border-gray-200 p-6 rounded-3xl shadow text-base leading-relaxed" style="background:var(--eu-bg);color:var(--eu-text)">
-          ${e.description}
-        </div>
-      </div>
-    `).join('');
-    
-    return `<div class="eu-cuadro-sinoptico my-5" id="${diagramaId}">
-      <div class="relative max-w-6xl mx-auto px-6">
-        <!-- Caja principal -->
-        <div class="absolute left-8 top-1/2 -translate-y-1/2 shadow-2xl w-80 py-10 px-8 rounded-3xl text-center z-20" 
-             style="background:${color};color:${getContrastColor(color)}">
-          <h2 class="font-black text-3xl leading-tight" style="color:${getContrastColor(color)}">${escapeHtml(mainTitle)}</h2>
-        </div>
-        
-        <!-- Etapas -->
-        <div class="ml-96 space-y-12 pt-12">
-          ${etapasHtml}
-        </div>
-        
-        <!-- SVG líneas conexión -->
-        <svg class="absolute top-0 left-0 w-full h-full pointer-events-none z-10" style="overflow:visible">
-          <defs>
-            <marker id="arrowhead-${diagramaId}" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-              <polygon points="0 0, 10 3.5, 0 7" fill="#475569"/>
-            </marker>
-          </defs>
-        </svg>
-      </div>
-      <p class="text-center text-muted mt-4" style="font-size:0.75rem">Cuadro Sinóptico - ${mainTitle}</p>
+  // ── MAPA SINÓPTICO (new) — Mermaid-based tree diagram ──────────────────────
+  // Syntax: [mapa-sinoptico dir="LR"] or [mapa-sinoptico]
+  //   Célula -> Eucariota
+  //   Célula -> Procariota
+  //   Eucariota -> Animal
+  // [/mapa-sinoptico]
+  // dir options: LR (left-right, default), TD (top-down), RL, BT
+  result = result.replace(/\[mapa-sinoptico(?:\s+dir="([^"]*)")?\]([\s\S]*?)\[\/mapa-sinoptico\]/gi, (_, dir, body) => {
+    const validDirs = ['LR','RL','TD','BT','TB'];
+    const safeDir = validDirs.includes((dir||'LR').toUpperCase()) ? (dir||'LR').toUpperCase() : 'LR';
+    const lines = body.split('\n').map(l => l.trim()).filter(l => l && l.includes('->'));
+    if (!lines.length) return '';
+    const sanitizeNode = n => {
+      const clean = n.replace(/"/g, "'").trim();
+      return /[\s\-\(\)\[\]\.,;:\/]/.test(clean) ? `"${clean}"` : clean;
+    };
+    const edges = lines.map(l => {
+      const parts = l.split(/-->?/).map(p => p.trim()).filter(Boolean);
+      if (parts.length < 2) return null;
+      return `  ${sanitizeNode(parts[0])} --> ${sanitizeNode(parts[1])}`;
+    }).filter(Boolean);
+    if (!edges.length) return '';
+    const mermaidCode = `graph ${safeDir}\n${edges.join('\n')}`;
+    const uid = `eu-ms-${Math.random().toString(36).slice(2,9)}`;
+    return `<div class="eu-mapa-sinoptico my-4" id="${uid}" data-mermaid="${escapeAttr(mermaidCode)}">
+      <div class="eu-mermaid-wrap"><div class="mermaid">${mermaidCode}</div></div>
+      <p class="text-center text-muted mt-2" style="font-size:.72rem">🗺️ Mapa Sinóptico</p>
     </div>`;
   });
 
-  // Legacy: keep interactive-diagram but deprecate
-  result = result.replace(/\[interactive-diagram(?:\s+title="([^"]+)")?\]([\s\S]*?)\[\/interactive-diagram\]/gi, (_, title, cellsContent) => {
-    const cellRegex = /\[cell\s+label="([^"]+)"\s+article="([^"]*)"\s+x="(\d+)"\s+y="(\d+)"(?:\s+color="([^"]*)")?\]([\s\S]*?)\[\/cell\]/gi;
-    let cells = [];
-    let cellMatch;
-    while ((cellMatch = cellRegex.exec(cellsContent)) !== null) {
-      cells.push({
-        label: cellMatch[1],
-        article: cellMatch[2],
-        x: Math.min(Math.max(parseInt(cellMatch[3]), 0), 95),
-        y: Math.min(Math.max(parseInt(cellMatch[4]), 0), 95),
-        color: cellMatch[5] || '#3b82f6',
-        description: cellMatch[6].trim()
-      });
+  // ── CUADRO SINÓPTICO (legacy, keep working) ───────────────────────────────
+  result = result.replace(/\[cuadro-sinoptico\s+main="([^"]+)"(?:\s+main_color="([^"]+)")?\]([\s\S]*?)\[\/cuadro-sinoptico\]/gi, (_, mainTitle, mainColor, content) => {
+    const etapaRegex = /\[etapa\s+title="([^"]+)"(?:\s+color="([^"]+)")?\]([\s\S]*?)\[\/etapa\]/gi;
+    let etapas = [], match;
+    const color = mainColor || '#f59e0b';
+    while ((match = etapaRegex.exec(content)) !== null) {
+      etapas.push({ title: match[1].trim(), color: match[2] || '#3b82f6', description: match[3].trim() });
     }
-    const diagramId = `eu-diag-${Date.now()}`;
-    const titleHtml = title ? `<h6 class="eu-diagram-title text-center mb-2">${escapeHtml(title)}</h6>` : '';
-    const cellsHtml = cells.map((c, i) => {
-      const articleLink = c.article
-        ? `<a href="/articulo.html?slug=${escapeAttr(c.article)}" class="btn btn-sm btn-dark mt-2">Ver artículo ↗</a>`
-        : '';
-      return `<button class="eu-diagram-cell" 
-        style="left:${c.x}%;top:${c.y}%;background:${escapeAttr(c.color)}"
-        data-cell-id="${diagramId}-cell-${i}"
-        aria-label="${escapeAttr(c.label)}"
-      >${escapeHtml(c.label)}</button>
-      <div class="eu-cell-popup" id="${diagramId}-cell-${i}" role="tooltip">
-        <strong>${escapeHtml(c.label)}</strong>
-        <div class="eu-cell-desc">${c.description}</div>
-        ${articleLink}
-      </div>`;
-    }).join('');
+    if (!etapas.length) return '';
+    const etapasHtml = etapas.map(e => `
+      <div class="eu-cs-row">
+        <div class="eu-cs-etapa-label" style="background:${e.color};color:${getContrastColor(e.color)}">${escapeHtml(e.title)}</div>
+        <div class="eu-cs-etapa-desc">${e.description}</div>
+      </div>`).join('');
+    return `<div class="eu-cuadro-sinoptico my-4">
+      <div class="eu-cs-main" style="background:${color};color:${getContrastColor(color)}">${escapeHtml(mainTitle)}</div>
+      <div class="eu-cs-body">${etapasHtml}</div>
+    </div>`;
+  });
 
-    return `<div class="eu-interactive-diagram" id="${diagramId}">
-      ${titleHtml}
-      <div class="eu-diagram-canvas">${cellsHtml}</div>
-      <p class="text-muted text-center mt-1" style="font-size:0.75rem">Haz clic en cada elemento para más información</p>
+  // ── DEPRECATED: [interactive-diagram] → show migration notice ─────────────
+  result = result.replace(/\[interactive-diagram(?:\s+[^\]]*)??\]([\s\S]*?)\[\/interactive-diagram\]/gi, () => {
+    return `<div class="eu-alert alert alert-warning" style="font-size:.85rem">
+      <strong>⚠️ Diagrama interactivo deprecado.</strong> Por favor reemplaza con <code>[mapa-sinoptico]</code>.<br>
+      <small>Ejemplo:<br>
+      <code>[mapa-sinoptico dir="LR"]<br>Célula -> Eucariota<br>Célula -> Procariota<br>[/mapa-sinoptico]</code></small>
     </div>`;
   });
 
@@ -285,45 +267,6 @@ function parseShortcodes(text) {
     return `<button class="btn btn-sm btn-outline-secondary eu-modal-trigger" data-bs-toggle="modal" data-bs-target="#${safeId}">${content.trim()}</button>`;
   });
 
-  // [interactive-diagram title="..."]...[/interactive-diagram]
-  result = result.replace(/\[interactive-diagram(?:\s+title="([^"]+)")?\]([\s\S]*?)\[\/interactive-diagram\]/gi, (_, title, cellsContent) => {
-    const cellRegex = /\[cell\s+label="([^"]+)"\s+article="([^"]*)"\s+x="(\d+)"\s+y="(\d+)"(?:\s+color="([^"]*)")?\]([\s\S]*?)\[\/cell\]/gi;
-    let cells = [];
-    let cellMatch;
-    while ((cellMatch = cellRegex.exec(cellsContent)) !== null) {
-      cells.push({
-        label: cellMatch[1],
-        article: cellMatch[2],
-        x: Math.min(Math.max(parseInt(cellMatch[3]), 0), 95),
-        y: Math.min(Math.max(parseInt(cellMatch[4]), 0), 95),
-        color: cellMatch[5] || '#3b82f6',
-        description: cellMatch[6].trim()
-      });
-    }
-    const diagramId = `eu-diag-${Date.now()}`;
-    const titleHtml = title ? `<h6 class="eu-diagram-title text-center mb-2">${escapeHtml(title)}</h6>` : '';
-    const cellsHtml = cells.map((c, i) => {
-      const articleLink = c.article
-        ? `<a href="/articulo.html?slug=${escapeAttr(c.article)}" class="btn btn-sm btn-dark mt-2">Ver artículo ↗</a>`
-        : '';
-      return `<button class="eu-diagram-cell" 
-        style="left:${c.x}%;top:${c.y}%;background:${escapeAttr(c.color)}"
-        data-cell-id="${diagramId}-cell-${i}"
-        aria-label="${escapeAttr(c.label)}"
-      >${escapeHtml(c.label)}</button>
-      <div class="eu-cell-popup" id="${diagramId}-cell-${i}" role="tooltip">
-        <strong>${escapeHtml(c.label)}</strong>
-        <div class="eu-cell-desc">${c.description}</div>
-        ${articleLink}
-      </div>`;
-    }).join('');
-
-    return `<div class="eu-interactive-diagram" id="${diagramId}">
-      ${titleHtml}
-      <div class="eu-diagram-canvas">${cellsHtml}</div>
-      <p class="text-muted text-center mt-1" style="font-size:0.75rem">Haz clic en cada elemento para más información</p>
-    </div>`;
-  });
 
   return result;
 }
