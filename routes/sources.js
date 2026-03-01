@@ -36,6 +36,72 @@ async function getSourceCounts(articleId) {
 }
 
 // ============================================================
+// Helper: Download PDF source (external router mounts at /api/sources/pdf/:sourceId)
+// ============================================================
+async function downloadPdf(req, res) {
+  try {
+    const sourceId = parseInt(req.params.sourceId);
+    if (!sourceId) {
+      return res.status(400).json({ error: 'ID de fuente inválido' });
+    }
+
+    const [rows] = await db.query(
+      'SELECT * FROM eu_article_sources WHERE id = ? AND type = "pdf"',
+      [sourceId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'PDF no encontrado' });
+    }
+
+    const source = rows[0];
+
+    // Check rate limit for PDF download
+    const ip = req.ip || req.connection.remoteAddress;
+    const userId = req.user?.id || null;
+    const role = req.user?.role || 'FREE';
+
+    const LIMITS = {
+      FREE: 10,
+      MONTHLY: 50,
+      MOD: 200,
+      ADMIN: 999
+    };
+    const limit = LIMITS[role] || LIMITS.FREE;
+
+    const oneHourAgo = new Date(Date.now() - 3600000);
+    const [[{ cnt }]] = await db.query(
+      `SELECT COUNT(*) AS cnt FROM eu_source_downloads 
+       WHERE (user_id = ? OR ip_address = ?) AND downloaded_at > ?`,
+      [userId, ip, oneHourAgo]
+    );
+
+    if (cnt >= limit) {
+      return res.status(429).json({ error: 'Límite de descargas alcanzado. Intenta en una hora.' });
+    }
+
+    // Log download
+    await db.query(
+      'INSERT INTO eu_source_downloads (source_id, user_id, ip_address) VALUES (?, ?, ?)',
+      [sourceId, userId, ip]
+    );
+
+    // Serve file
+    try {
+      await fs.access(source.pdf_path);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(source.pdf_original_name)}"`);
+      res.sendFile(source.pdf_path);
+    } catch (e) {
+      res.status(404).json({ error: 'Archivo PDF no encontrado en el servidor' });
+    }
+  } catch (err) {
+    console.error('GET /sources/pdf/:id error:', err);
+    res.status(500).json({ error: 'Error al descargar PDF' });
+  }
+}
+
+// ============================================================
 // GET /api/articles/:id/sources - Get all sources for article
 // ============================================================
 router.get('/:id/sources', async (req, res) => {
@@ -302,72 +368,6 @@ router.post('/:id/sources/pdf',
 );
 
 // ============================================================
-// GET /api/sources/pdf/:sourceId - Download PDF source
-// ============================================================
-router.get('/sources/pdf/:sourceId', async (req, res) => {
-  try {
-    const sourceId = parseInt(req.params.sourceId);
-    if (!sourceId) {
-      return res.status(400).json({ error: 'ID de fuente inválido' });
-    }
-
-    const [rows] = await db.query(
-      'SELECT * FROM eu_article_sources WHERE id = ? AND type = "pdf"',
-      [sourceId]
-    );
-
-    if (!rows.length) {
-      return res.status(404).json({ error: 'PDF no encontrado' });
-    }
-
-    const source = rows[0];
-
-    // Check rate limit for PDF download
-    const ip = req.ip || req.connection.remoteAddress;
-    const userId = req.user?.id || null;
-    const role = req.user?.role || 'FREE';
-
-    const LIMITS = {
-      FREE: 10,
-      MONTHLY: 50,
-      MOD: 200,
-      ADMIN: 999
-    };
-    const limit = LIMITS[role] || LIMITS.FREE;
-
-    const oneHourAgo = new Date(Date.now() - 3600000);
-    const [[{ cnt }]] = await db.query(
-      `SELECT COUNT(*) AS cnt FROM eu_source_downloads 
-       WHERE (user_id = ? OR ip_address = ?) AND downloaded_at > ?`,
-      [userId, ip, oneHourAgo]
-    );
-
-    if (cnt >= limit) {
-      return res.status(429).json({ error: 'Límite de descargas alcanzado. Intenta en una hora.' });
-    }
-
-    // Log download
-    await db.query(
-      'INSERT INTO eu_source_downloads (source_id, user_id, ip_address) VALUES (?, ?, ?)',
-      [sourceId, userId, ip]
-    );
-
-    // Serve file
-    try {
-      await fs.access(source.pdf_path);
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(source.pdf_original_name)}"`);
-      res.sendFile(source.pdf_path);
-    } catch (e) {
-      res.status(404).json({ error: 'Archivo PDF no encontrado en el servidor' });
-    }
-  } catch (err) {
-    console.error('GET /sources/pdf/:id error:', err);
-    res.status(500).json({ error: 'Error al descargar PDF' });
-  }
-});
-
-// ============================================================
 // PUT /api/articles/:id/sources/:sourceId - Update source
 // ============================================================
 router.put('/:id/sources/:sourceId', requireAuth, async (req, res) => {
@@ -549,4 +549,4 @@ router.put('/:id/sources/reorder', requireAuth, async (req, res) => {
   }
 });
 
-module.exports = router;
+module.exports = { router, downloadPdf };
