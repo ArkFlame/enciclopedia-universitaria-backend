@@ -17,6 +17,7 @@ const STORAGE = process.env.STORAGE_PATH || path.join(__dirname, '../storage');
 const MAX_PDF_SIZE = parseInt(process.env.MAX_PDF_SIZE) || 10 * 1024 * 1024; // 10MB
 const MAX_PDFS_PER_ARTICLE = 5;
 const MAX_LINKS_PER_ARTICLE = 20;
+const MAX_TOTAL_SOURCES = parseInt(process.env.MAX_SOURCES_PER_ARTICLE) || 25;
 
 // ============================================================
 // Helper: Get current source counts for an article
@@ -29,7 +30,9 @@ async function getSourceCounts(articleId) {
      FROM eu_article_sources WHERE article_id = ?`,
     [articleId]
   );
-  return { links: links || 0, pdfs: pdfs || 0 };
+  const safeLinks = links || 0;
+  const safePdfs = pdfs || 0;
+  return { links: safeLinks, pdfs: safePdfs, total: safeLinks + safePdfs };
 }
 
 // ============================================================
@@ -49,10 +52,14 @@ router.get('/articles/:id/sources', async (req, res) => {
        ORDER BY display_order ASC, created_at ASC`,
       [articleId]
     );
+    const enriched = rows.map(r => ({
+      ...r,
+      download_url: r.type === 'pdf' ? `/api/sources/pdf/${r.id}` : r.url
+    }));
 
     // Separate PDFs and links, PDFs first
-    const pdfs = rows.filter(r => r.type === 'pdf');
-    const links = rows.filter(r => r.type === 'link');
+    const pdfs = enriched.filter(r => r.type === 'pdf');
+    const links = enriched.filter(r => r.type === 'link');
 
     res.json({
       pdfs,
@@ -109,6 +116,12 @@ router.post('/articles/:id/sources', requireAuth, checkRateLimit('upload_pdf'), 
     // Check limits
     const counts = await getSourceCounts(articleId);
 
+    if (counts.total >= MAX_TOTAL_SOURCES) {
+      return res.status(400).json({
+        error: `Límite de ${MAX_TOTAL_SOURCES} fuentes alcanzado para este artículo`
+      });
+    }
+
     if (type === 'link' && counts.links >= MAX_LINKS_PER_ARTICLE) {
       return res.status(400).json({ 
         error: `Límite de ${MAX_LINKS_PER_ARTICLE} enlaces alcanzado para este artículo` 
@@ -162,7 +175,8 @@ router.post('/articles/:id/sources', requireAuth, checkRateLimit('upload_pdf'), 
         pdf_path: pdfPath,
         pdf_original_name: pdfOriginalName,
         pdf_size: pdfSize,
-        favicon_url: faviconUrl
+        favicon_url: faviconUrl,
+        download_url: url || null
       }
     });
   } catch (err) {
@@ -228,6 +242,12 @@ router.post('/articles/:id/sources/pdf',
 
       // Check PDF limit
       const counts = await getSourceCounts(articleId);
+
+      if (counts.total >= MAX_TOTAL_SOURCES) {
+        return res.status(400).json({ 
+          error: `Límite de ${MAX_TOTAL_SOURCES} fuentes alcanzado para este artículo` 
+        });
+      }
       if (counts.pdfs >= MAX_PDFS_PER_ARTICLE) {
         return res.status(400).json({ 
           error: `Límite de ${MAX_PDFS_PER_ARTICLE} PDFs alcanzado para este artículo` 

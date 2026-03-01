@@ -91,6 +91,18 @@ function sanitizeContent(raw, maxLen = 200000) {
 }
 
 /**
+ * Sanitize summaries (allows Markdown/newlines).
+ */
+function sanitizeSummary(raw, maxLen = 3000) {
+  if (!raw || typeof raw !== 'string') return '';
+  return raw
+    .replace(/\0/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .slice(0, maxLen);
+}
+
+/**
  * Sanitize email
  */
 function sanitizeEmail(raw) {
@@ -106,5 +118,6 @@ module.exports = {
   sanitizeRole,
   sanitizeStatus,
   sanitizeContent,
+  sanitizeSummary,
   sanitizeEmail
 };

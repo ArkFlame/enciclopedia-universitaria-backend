@@ -6,6 +6,7 @@
 
 const { JSDOM } = require('jsdom');
 const createDOMPurify = require('dompurify');
+const shortcodeProcessor = require('./shortcodes/ShortcodeProcessor');
 
 const window = new JSDOM('').window;
 const DOMPurify = createDOMPurify(window);
@@ -56,7 +57,7 @@ const PURIFY_CONFIG = {
  */
 
 function parseShortcodes(text) {
-  let result = text;
+  let result = shortcodeProcessor.process(text || '');
 
   // [source-ref title="Título de la fuente"] - inline citation
   let sourceRefCounter = 0;
@@ -64,16 +65,6 @@ function parseShortcodes(text) {
     sourceRefCounter++;
     const n = sourceRefCounter;
     return `<sup class="eu-source-ref" title="${escapeAttr(title)}" style="cursor:help">[${n}]</sup>`;
-  });
-
-  // [tooltip text="..."]...[/tooltip]
-  result = result.replace(/\[tooltip\s+text="([^"]+)"\]([\s\S]*?)\[\/tooltip\]/gi, (_, tip, content) => {
-    return `<span class="eu-tooltip" data-bs-toggle="tooltip" data-bs-placement="top" title="${escapeAttr(tip)}" style="border-bottom:1px dashed #666;cursor:help">${content.trim()}</span>`;
-  });
-
-  // [ref article="slug"]Texto[/ref]
-  result = result.replace(/\[ref\s+article="([^"]+)"\]([\s\S]*?)\[\/ref\]/gi, (_, slug, content) => {
-    return `<a href="/articulo.html?slug=${escapeAttr(slug)}" class="eu-article-ref" data-article-ref="${escapeAttr(slug)}">${content.trim()} <sup>↗</sup></a>`;
   });
 
   // [highlight color="..."]...[/highlight]
@@ -104,16 +95,6 @@ function parseShortcodes(text) {
     const safeAlt = escapeAttr(alt || '');
     const style = width ? `style="max-width:${escapeAttr(width)}px"` : '';
     const img = `<img src="${escapeAttr(file)}" alt="${safeAlt}" class="img-fluid rounded eu-article-img" loading="lazy" ${style}>`;
-    if (caption) {
-      return `<figure class="eu-figure text-center my-3">${img}<figcaption class="eu-caption text-muted mt-1">${escapeHtml(caption)}</figcaption></figure>`;
-    }
-    return `<div class="text-center my-3">${img}</div>`;
-  });
-
-  // [image src="..." alt="..." caption="..."] (legacy)
-  result = result.replace(/\[image\s+src="([^"]+)"(?:\s+alt="([^"]*)")?(?:\s+caption="([^"]*)")?\]/gi, (_, src, alt, caption) => {
-    const safeAlt = escapeAttr(alt || '');
-    const img = `<img src="${escapeAttr(src)}" alt="${safeAlt}" class="img-fluid rounded eu-article-img" loading="lazy">`;
     if (caption) {
       return `<figure class="eu-figure text-center my-3">${img}<figcaption class="eu-caption text-muted mt-1">${escapeHtml(caption)}</figcaption></figure>`;
     }

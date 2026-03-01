@@ -8,10 +8,11 @@ const { checkRateLimit }            = require('../middleware/rateLimit');
 const { processArticleContent }     = require('../utils/shortcodeParser');
 const {
   sanitizeSearchQuery, sanitizeString, sanitizeInt,
-  sanitizeSlug, sanitizeStatus, sanitizeContent
+  sanitizeSlug, sanitizeStatus, sanitizeContent, sanitizeSummary
 } = require('../utils/sanitize');
 
 const STORAGE = process.env.STORAGE_PATH || path.join(__dirname, '../storage');
+const BASE_URL = process.env.BASE_URL || '';
 
 function slugify(text) {
   return text.toLowerCase()
@@ -153,6 +154,7 @@ router.get('/:slug', optionalAuth, async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Artículo no encontrado' });
 
     const article = rows[0];
+    const summaryHtml = article.summary ? await processArticleContent(article.summary) : '';
     const FREE_LIMIT = sanitizeInt(process.env.FREE_ARTICLES_PER_MONTH, 1, 9999, 30);
     let limitReached = false;
 
@@ -197,6 +199,10 @@ router.get('/:slug', optionalAuth, async (req, res) => {
        FROM eu_article_sources WHERE article_id = ? ORDER BY display_order ASC, created_at ASC`,
       [article.id]
     );
+    const formattedSources = sources.map(s => ({
+      ...s,
+      download_url: s.type === 'pdf' ? `/api/sources/pdf/${s.id}` : s.url
+    }));
 
     const [related] = await db.query(
       `SELECT slug, title, summary FROM eu_articles
@@ -207,11 +213,12 @@ router.get('/:slug', optionalAuth, async (req, res) => {
 
     res.json({
       ...article,
+      summaryHtml,
       htmlContent: limitReached ? null : htmlContent,
       limitReached,
       freeLimit: FREE_LIMIT,
       media,
-      sources,
+      sources: formattedSources,
       related
     });
   } catch (err) {
@@ -224,7 +231,7 @@ router.get('/:slug', optionalAuth, async (req, res) => {
 router.post('/', requireAuth, checkRateLimit('submit_article'), async (req, res) => {
   try {
     const title    = sanitizeString(req.body.title,   500);
-    const summary  = sanitizeString(req.body.summary, 2000);
+    const summary  = sanitizeSummary(req.body.summary, 2000);
     const content  = sanitizeContent(req.body.content);
     const category = sanitizeString(req.body.category, 100);
     const tags     = Array.isArray(req.body.tags)
@@ -253,10 +260,11 @@ router.post('/', requireAuth, checkRateLimit('submit_article'), async (req, res)
 
     // Notify mods/admins
     const [admins] = await db.query('SELECT id FROM eu_users WHERE role IN ("ADMIN","MOD")');
+    const articleUrl = `${BASE_URL}/articulo.html?slug=${slug}`;
     for (const admin of admins) {
       await db.query(
-        `INSERT INTO eu_notifications (user_id, type, message, reference_id, article_slug) VALUES (?, 'new_submission', ?, ?, ?)`,
-        [admin.id, `Nuevo artículo pendiente: "${title}"`, result.insertId, slug]
+        `INSERT INTO eu_notifications (user_id, type, message, reference_id, article_slug, notification_url) VALUES (?, 'new_submission', ?, ?, ?, ?)`,
+        [admin.id, `Nuevo artículo pendiente: "${title}"`, result.insertId, slug, articleUrl]
       );
     }
     await db.query('UPDATE eu_users SET notification_count = notification_count + 1 WHERE role IN ("ADMIN","MOD")');
@@ -275,7 +283,9 @@ router.post('/:id/edit', requireAuth, checkRateLimit('edit_article'), async (req
     if (!articleId) return res.status(400).json({ error: 'ID inválido' });
 
     const title    = sanitizeString(req.body.title,   500);
-    const summary  = sanitizeString(req.body.summary, 2000);
+    const summary  = typeof req.body.summary === 'string'
+      ? sanitizeSummary(req.body.summary, 2000)
+      : '';
     const content  = sanitizeContent(req.body.content);
     const editNote = sanitizeString(req.body.editNote, 1000);
 
@@ -297,11 +307,12 @@ router.post('/:id/edit', requireAuth, checkRateLimit('edit_article'), async (req
 
     // Notify mods/admins
     const article = artRows[0];
+    const articleUrl = `${BASE_URL}/articulo.html?slug=${article.slug}`;
     const [admins] = await db.query('SELECT id FROM eu_users WHERE role IN ("ADMIN","MOD")');
     for (const admin of admins) {
       await db.query(
-        `INSERT INTO eu_notifications (user_id, type, message, reference_id) VALUES (?, 'new_submission', ?, ?)`,
-        [admin.id, `Nueva edición pendiente en: "${article.title}"`, articleId]
+        `INSERT INTO eu_notifications (user_id, type, message, reference_id, article_slug, notification_url) VALUES (?, 'new_submission', ?, ?, ?, ?)`,
+        [admin.id, `Nueva edición pendiente en: "${article.title}"`, articleId, article.slug, articleUrl]
       );
     }
     await db.query('UPDATE eu_users SET notification_count = notification_count + 1 WHERE role IN ("ADMIN","MOD")');
