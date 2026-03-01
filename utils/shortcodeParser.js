@@ -38,8 +38,6 @@ const PURIFY_CONFIG = {
  * [image src="ruta/img.jpg" alt="descripción" caption="Pie de foto"]
  * [youtube id="VIDEO_ID"]
  * [mapa-sinoptico name="Título"]Padre -> Hijo[/mapa-sinoptico]
- * [cuadro-sinoptico name="Título" main="..." main_color="#..."]Padre -> Hijo[/cuadro-sinoptico]
- * [family-tree name="Título"]Padre -> Hijo[/family-tree]
  * [accordion title="Título"]Contenido desplegable[/accordion]
  * [card title="Título" image="ruta/imagen.jpg"]Contenido[/card]
  * [grid cols="3"]contenido[/grid]

@@ -48,19 +48,17 @@ function parseArrowSyntax(body) {
 
 function buildSynopticMarkup(name, lines, colors = {}) {
   if (!lines.length) return '';
-  const caption = escapeHtml(name || 'Mapa Sinóptico');
   const safeCaption = escapeAttr(name || 'Mapa Sinóptico');
   const payload = escapeHtml(lines.join('\n'));
   const colorAttr = Object.keys(colors).length
-    ? ` data-node-colors="${escapeAttr(JSON.stringify(colors))}`.concat('"')
+    ? ` data-node-colors="${escapeAttr(JSON.stringify(colors))}"`
     : '';
-  const uid = `eu-ms-${Math.random().toString(36).slice(2,9)}`;
-  return `<div class="eu-mapa-sinoptico my-4" data-mapa-sinoptico="${uid}" data-caption="${safeCaption}"${colorAttr}>
+  return `<div class="eu-mapa-sinoptico" data-caption="${safeCaption}"${colorAttr}>
     <div class="eu-mapa-sinoptico-wrapper">
       <svg class="eu-mapa-sinoptico-svg" aria-hidden="true" focusable="false"></svg>
       <div class="eu-mapa-sinoptico-levels" role="presentation"></div>
     </div>
-    <div class="eu-mapa-sinoptico-caption">${caption}</div>
+    <div class="eu-mapa-sinoptico-caption"></div>
     <pre class="eu-mapa-sinoptico-data" hidden>${payload}</pre>
   </div>`;
 }
@@ -86,8 +84,6 @@ const img = require('./img');
 const image = require('./image');
 const youtube = require('./youtube');
 const mapaSinoptico = require('./mapa-sinoptico');
-const cuadroSinoptico = require('./cuadro-sinoptico');
-const familyTree = require('./family-tree');
 const interactiveDiagram = require('./interactive-diagram');
 const accordion = require('./accordion');
 const card = require('./card');
@@ -108,8 +104,6 @@ const parsers = [
   image,
   youtube,
   mapaSinoptico,
-  cuadroSinoptico,
-  familyTree,
   interactiveDiagram,
   accordion,
   card,
