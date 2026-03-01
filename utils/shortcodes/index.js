@@ -46,14 +46,17 @@ function parseArrowSyntax(body) {
   return { lines, colors };
 }
 
-function buildSynopticMarkup(name, lines, colors = {}) {
+function buildSynopticMarkup(name, lines, colors = {}, summaries = {}) {
   if (!lines.length) return '';
   const safeCaption = escapeAttr(name || 'Mapa Sinóptico');
   const payload = escapeHtml(lines.join('\n'));
   const colorAttr = Object.keys(colors).length
     ? ` data-node-colors="${escapeAttr(JSON.stringify(colors))}"`
     : '';
-  return `<div class="eu-mapa-sinoptico" data-caption="${safeCaption}"${colorAttr}>
+  const summaryAttr = Object.keys(summaries).length
+    ? ` data-node-summaries="${escapeAttr(JSON.stringify(summaries))}"`
+    : '';
+  return `<div class="eu-mapa-sinoptico" data-caption="${safeCaption}"${colorAttr}${summaryAttr}>
     <div class="eu-mapa-sinoptico-header"></div>
     <div class="eu-mapa-sinoptico-body">
       <div class="eu-mapa-sinoptico-wrapper">
