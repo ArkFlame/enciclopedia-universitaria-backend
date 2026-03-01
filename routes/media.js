@@ -62,7 +62,7 @@ async function compressToWebP(buffer, mimetype) {
   // First pass
   outBuf = await sharp(buffer)
     .resize({ width, height, fit: 'inside', withoutEnlargement: true })
-    .webp({ quality: Math.round(quality * 100), effort: 4 })
+    .webp({ quality: Math.round(quality), effort: 4 })
     .toBuffer();
 
   // Iterative reduction if still over threshold
