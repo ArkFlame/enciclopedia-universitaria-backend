@@ -90,7 +90,6 @@ const image = require('./image');
 const youtube = require('./youtube');
 const mapaSinoptico = require('./mapa-sinoptico');
 const interactiveDiagram = require('./interactive-diagram');
-const accordion = require('./accordion');
 const card = require('./card');
 const grid = require('./grid');
 const tabs = require('./tabs');
@@ -110,7 +109,6 @@ const parsers = [
   youtube,
   mapaSinoptico,
   interactiveDiagram,
-  accordion,
   card,
   grid,
   tabs,
