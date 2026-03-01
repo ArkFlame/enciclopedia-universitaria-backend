@@ -1,18 +1,11 @@
-// shortcodeParser.js
-/**
- * PARSER DE SHORTCODES - Enciclopedia Universitaria
- * Router principal que delega a parsers individuales en /shortcodes/
- * Convierte shortcodes seguros a HTML Bootstrap/Tailwind
- * NO permite JS arbitrario. Solo componentes predefinidos.
- */
 const { JSDOM } = require('jsdom');
 const createDOMPurify = require('dompurify');
+const garbageParser = require('./garbageParser');
 const { parsers, utils, sourceRef } = require('./shortcodes');
 
 const window = new JSDOM('').window;
 const DOMPurify = createDOMPurify(window);
 
-// Configuración DOMPurify - MUY restrictiva
 const PURIFY_CONFIG = {
   ALLOWED_TAGS: ['p','br','strong','em','u','s','h1','h2','h3','h4','h5','h6',
     'ul','ol','li','blockquote','code','pre','table','thead','tbody','tr','th','td',
@@ -25,27 +18,6 @@ const PURIFY_CONFIG = {
   ADD_ATTR: ['data-bs-toggle','data-bs-target','data-bs-dismiss','data-article-ref','data-mermaid']
 };
 
-/**
- * SHORTCODES DISPONIBLES (todos en /shortcodes/):
- *
- * [tooltip text="Descripción"]Término[/tooltip]
- * [ref article="slug-del-articulo"]Texto del enlace[/ref]
- * [highlight color="yellow"]texto destacado[/highlight]
- * [alert type="info|warning|danger|success"]Mensaje[/alert]
- * [callout icon="🔬"]Nota científica importante[/callout]
- * [formula]E = mc^2[/formula]
- * [img file="hero.jpg" alt="Descripción" caption="Pie de foto"]
- * [image src="ruta/img.jpg" alt="descripción" caption="Pie de foto"]
- * [youtube id="VIDEO_ID"]
- * [mapa-sinoptico name="Título"]Padre -> Hijo[/mapa-sinoptico]
- * [card title="Título" image="ruta/imagen.jpg"]Contenido[/card]
- * [grid cols="3"]contenido[/grid]
- * [tabs][tab title="Tab 1"]Contenido 1[/tab][/tabs]
- * [modal id="..." title="..."]...[/modal]
- * [modal-trigger modal="..."]...[/modal-trigger]
- * [source-ref title="Título de la fuente"]
- */
-
 function parseShortcodes(text) {
   let result = text;
   if (sourceRef && typeof sourceRef.resetCounter === 'function') {
@@ -57,12 +29,10 @@ function parseShortcodes(text) {
   return result;
 }
 
-/**
- * Pipeline completo: shortcodes → marked → DOMPurify
- */
 async function processArticleContent(rawMarkdown) {
   const { marked } = require('marked');
-  const withShortcodes = parseShortcodes(rawMarkdown);
+  const normalizedMarkdown = garbageParser.normalizeMarkdown(rawMarkdown);
+  const withShortcodes = parseShortcodes(normalizedMarkdown);
   const html = await marked.parse(withShortcodes, {
     breaks: true,
     gfm: true
