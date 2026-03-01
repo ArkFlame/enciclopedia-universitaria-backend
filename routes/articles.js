@@ -255,8 +255,8 @@ router.post('/', requireAuth, checkRateLimit('submit_article'), async (req, res)
     const [admins] = await db.query('SELECT id FROM eu_users WHERE role IN ("ADMIN","MOD")');
     for (const admin of admins) {
       await db.query(
-        `INSERT INTO eu_notifications (user_id, type, message, reference_id) VALUES (?, 'new_submission', ?, ?)`,
-        [admin.id, `Nuevo artículo pendiente: "${title}"`, result.insertId]
+        `INSERT INTO eu_notifications (user_id, type, message, reference_id, article_slug) VALUES (?, 'new_submission', ?, ?, ?)`,
+        [admin.id, `Nuevo artículo pendiente: "${title}"`, result.insertId, slug]
       );
     }
     await db.query('UPDATE eu_users SET notification_count = notification_count + 1 WHERE role IN ("ADMIN","MOD")');

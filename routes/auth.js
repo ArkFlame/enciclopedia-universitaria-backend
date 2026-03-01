@@ -118,12 +118,20 @@ router.get('/me', requireAuth, async (req, res) => {
 
 // GET /api/auth/notifications
 router.get('/notifications', requireAuth, async (req, res) => {
-  const [rows] = await db.query(
-    `SELECT id, type, message, reference_id, read_at, created_at 
-     FROM eu_notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 30`,
-    [req.user.id]
-  );
-  res.json(rows);
+  try {
+    const [rows] = await db.query(
+      `SELECT n.id, n.type, n.message, n.reference_id, n.read_at, n.created_at,
+              COALESCE(n.article_slug, a.slug) AS article_slug
+       FROM eu_notifications n
+       LEFT JOIN eu_articles a ON n.reference_id = a.id AND n.type IN ('article_approved','article_rejected','new_submission')
+       WHERE n.user_id = ? ORDER BY n.created_at DESC LIMIT 30`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch(err) {
+    console.error('GET /notifications error:', err);
+    res.json([]); // never crash auth
+  }
 });
 
 // PUT /api/auth/notifications/read

@@ -58,6 +58,14 @@ const PURIFY_CONFIG = {
 function parseShortcodes(text) {
   let result = text;
 
+  // [source-ref title="Título de la fuente"] - inline citation
+  let sourceRefCounter = 0;
+  result = result.replace(/\[source-ref\s+title="([^"]+)"\]/gi, (_, title) => {
+    sourceRefCounter++;
+    const n = sourceRefCounter;
+    return `<sup class="eu-source-ref" title="${escapeAttr(title)}" style="cursor:help">[${n}]</sup>`;
+  });
+
   // [tooltip text="..."]...[/tooltip]
   result = result.replace(/\[tooltip\s+text="([^"]+)"\]([\s\S]*?)\[\/tooltip\]/gi, (_, tip, content) => {
     return `<span class="eu-tooltip" data-bs-toggle="tooltip" data-bs-placement="top" title="${escapeAttr(tip)}" style="border-bottom:1px dashed #666;cursor:help">${content.trim()}</span>`;
