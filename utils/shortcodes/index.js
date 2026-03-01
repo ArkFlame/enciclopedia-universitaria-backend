@@ -55,10 +55,6 @@ function buildSynopticMarkup(name, lines, colors = {}) {
     : '';
   return `<div class="eu-mapa-sinoptico" data-caption="${safeCaption}"${colorAttr}>
     <div class="eu-mapa-sinoptico-header">
-      <button type="button" class="eu-mapa-sinoptico-toggle" aria-expanded="false">
-        <span class="eu-mapa-sinoptico-toggle-icon" aria-hidden="true"></span>
-        <span class="eu-mapa-sinoptico-toggle-label">Mostrar mapa sinóptico</span>
-      </button>
       <button type="button" class="eu-mapa-sinoptico-download">
         <svg class="eu-mapa-sinoptico-download-icon" viewBox="0 0 24 24" role="presentation" aria-hidden="true">
           <path d="M12 6v10m0 0l-4-4m4 4l4-4M6 18h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
