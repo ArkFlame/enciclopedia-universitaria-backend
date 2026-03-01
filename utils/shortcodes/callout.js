@@ -1,10 +1,11 @@
-/**
- * [callout icon="🔬"]Nota científica importante[/callout]
- */
-module.exports = function callout(text) {
+module.exports = function callout(text, helpers) {
+  const renderMarkdownFragment = helpers?.renderMarkdownFragment;
   return text.replace(/\[callout(?:\s+icon="([^"]+)")?\]([\s\S]*?)\[\/callout\]/gi,
-    (_, icon, content) => {
-      return `<div class="eu-callout"><span class="eu-callout-icon">${icon || '📌'}</span><div class="eu-callout-body">${content.trim()}</div></div>`;
+    (_match, icon, content) => {
+      const renderedBody = renderMarkdownFragment
+        ? renderMarkdownFragment(content.trim())
+        : content.trim();
+      return `<div class="eu-callout"><span class="eu-callout-icon">${icon || '📌'}</span><div class="eu-callout-body">${renderedBody}</div></div>`;
     }
   );
 };
