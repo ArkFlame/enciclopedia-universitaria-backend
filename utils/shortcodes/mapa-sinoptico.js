@@ -1,3 +1,4 @@
+// mapa-sinoptico.js
 /**
  * [mapa-sinoptico name="Título"] Padre -> Hijo [/mapa-sinoptico]
  * Legacy aliases: [cuadro-sinoptico], [family-tree]

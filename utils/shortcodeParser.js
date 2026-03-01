@@ -1,10 +1,10 @@
+// shortcodeParser.js
 /**
  * PARSER DE SHORTCODES - Enciclopedia Universitaria
  * Router principal que delega a parsers individuales en /shortcodes/
  * Convierte shortcodes seguros a HTML Bootstrap/Tailwind
  * NO permite JS arbitrario. Solo componentes predefinidos.
  */
-
 const { JSDOM } = require('jsdom');
 const createDOMPurify = require('dompurify');
 const { parsers, utils, sourceRef } = require('./shortcodes');

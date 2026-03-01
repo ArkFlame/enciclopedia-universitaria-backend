@@ -1,8 +1,8 @@
+// index.js
 /**
  * Shortcode parsers index - Enciclopedia Universitaria
  * Each shortcode is a separate module for maintainability
  */
-
 function escapeAttr(str) {
   return String(str || '').replace(/[&<>"']/g, c => ({
     '&': '&amp;',
