@@ -54,14 +54,7 @@ function buildSynopticMarkup(name, lines, colors = {}) {
     ? ` data-node-colors="${escapeAttr(JSON.stringify(colors))}"`
     : '';
   return `<div class="eu-mapa-sinoptico" data-caption="${safeCaption}"${colorAttr}>
-    <div class="eu-mapa-sinoptico-header">
-      <button type="button" class="eu-mapa-sinoptico-download">
-        <svg class="eu-mapa-sinoptico-download-icon" viewBox="0 0 24 24" role="presentation" aria-hidden="true">
-          <path d="M12 6v10m0 0l-4-4m4 4l4-4M6 18h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
-        </svg>
-        Descargar Mapa Sinoptico
-      </button>
-    </div>
+    <div class="eu-mapa-sinoptico-header"></div>
     <div class="eu-mapa-sinoptico-body">
       <div class="eu-mapa-sinoptico-wrapper">
         <div class="eu-mapa-sinoptico-tree" role="presentation"></div>
