@@ -1,3 +1,4 @@
+// shortcodeParser.js
 const { JSDOM } = require('jsdom');
 const createDOMPurify = require('dompurify');
 const garbageParser = require('./garbageParser');
