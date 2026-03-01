@@ -55,8 +55,7 @@ function buildSynopticMarkup(name, lines, colors = {}) {
     : '';
   return `<div class="eu-mapa-sinoptico" data-caption="${safeCaption}"${colorAttr}>
     <div class="eu-mapa-sinoptico-wrapper">
-      <svg class="eu-mapa-sinoptico-svg" aria-hidden="true" focusable="false"></svg>
-      <div class="eu-mapa-sinoptico-levels" role="presentation"></div>
+      <div class="eu-mapa-sinoptico-tree" role="presentation"></div>
     </div>
     <div class="eu-mapa-sinoptico-caption"></div>
     <pre class="eu-mapa-sinoptico-data" hidden>${payload}</pre>
