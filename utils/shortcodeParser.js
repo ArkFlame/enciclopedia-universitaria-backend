@@ -63,7 +63,8 @@ function parseShortcodes(text) {
   result = result.replace(/\[source-ref\s+title="([^"]+)"\]/gi, (_, title) => {
     sourceRefCounter++;
     const n = sourceRefCounter;
-    return `<sup class="eu-source-ref" title="${escapeAttr(title)}" style="cursor:help">[${n}]</sup>`;
+    const safeTitle = escapeAttr(title);
+    return `<a class="eu-source-ref" data-source-title="${safeTitle}" href="#" role="link" title="Ir a la fuente: ${safeTitle}">[${n}]</a>`;
   });
 
   // [tooltip text="..."]...[/tooltip]
@@ -125,91 +126,28 @@ function parseShortcodes(text) {
     return `<div class="eu-video-wrapper ratio ratio-16x9 my-3"><iframe src="https://www.youtube.com/embed/${id}" allowfullscreen loading="lazy" title="Video de YouTube"></iframe></div>`;
   });
 
-  // ── FAMILY TREE / MAPA CONCEPTUAL (NEW - renders a real tree)
+  // ── MAPA SINÓPTICO / Family Tree (nuevo render)
   result = result.replace(/\[family-tree(?:\s+name="([^"]*)")?\]([\s\S]*?)\[\/family-tree\]/gi, (_, name, body) => {
-    const treeName = name || 'Mapa Conceptual';
-    const uid = `eu-ft-${Math.random().toString(36).slice(2,9)}`;
-    
-    function parseNodes(content) {
-      const nodes = [];
-      const nodeRegex = /\[node\s+label="([^"]+)"(?:\s+color="([^"]*)")?\]([\s\S]*?)\[\/node\]/gi;
-      let match;
-      while ((match = nodeRegex.exec(content)) !== null) {
-        const [, label, color, childrenContent] = match;
-        const safeColor = color || '#3b82f6';
-        const children = parseNodes(childrenContent);
-        nodes.push({ label, color: safeColor, children });
-      }
-      return nodes;
-    }
-    
-    const rootNodes = parseNodes(body);
-    if (!rootNodes.length) return '';
-    
-    function generateTreeHTML(nodes) {
-      if (!nodes.length) return '';
-      return `<ul class="eu-tree-level">${nodes.map(node => `
-        <li class="eu-tree-node-wrapper">
-          <div class="eu-tree-node" style="--node-color: ${escapeAttr(node.color)}; background: ${escapeAttr(node.color)}; color: ${getContrastColor(node.color)}">
-            <span class="eu-tree-label">${escapeHtml(node.label)}</span>
-          </div>
-          ${node.children.length ? generateTreeHTML(node.children) : ''}
-        </li>
-      `).join('')}</ul>`;
-    }
-    
-    const treeHTML = generateTreeHTML(rootNodes);
-    
-    return `<div class="eu-family-tree-container my-4" id="${uid}" data-family-tree="true">
-      <div class="eu-family-tree-wrapper">
-        ${treeHTML}
-      </div>
-      <p class="eu-tree-caption">🗺️ ${escapeHtml(treeName)}</p>
-    </div>`;
+    const nodes = parseTreeNodes(body);
+    if (!nodes.length) return '';
+    const { edges, colors } = collectTreeEdges(nodes);
+    if (!edges.length) return '';
+    const lines = edges.map(edge => `${edge.parent} -> ${edge.child}`);
+    return buildSynopticMarkup(name, lines, colors);
   });
 
-  // ── LEGACY: mapa-sinoptico (DEPRECATED, auto-converts to family-tree)
-  result = result.replace(/\[mapa-sinoptico(?:\s+dir="([^"]*)")?\]([\s\S]*?)\[\/mapa-sinoptico\]/gi, (_, dir, body) => {
-    const lines = body.split('\n').map(l => l.trim()).filter(l => l && l.includes('->'));
-    const relationships = [];
-    lines.forEach(line => {
-      const parts = line.split(/-->?/).map(p => p.trim()).filter(Boolean);
-      if (parts.length === 2) relationships.push({ parent: parts[0], child: parts[1] });
+  result = result.replace(/\[mapa-sinoptico(?:\s+name="([^"]*)")?\]([\s\S]*?)\[\/mapa-sinoptico\]/gi, (_, name, body) => {
+    const lines = [];
+    body.split('\n').forEach(raw => {
+      const line = raw.trim();
+      if (!line) return;
+      const parts = line.split(/-+>/).map(p => p.trim()).filter(Boolean);
+      if (parts.length === 2) {
+        lines.push(`${parts[0]} -> ${parts[1]}`);
+      }
     });
-    if (!relationships.length) return '';
-    const nodeMap = new Map();
-    const childrenSet = new Set();
-    relationships.forEach(({ parent, child }) => {
-      if (!nodeMap.has(parent)) nodeMap.set(parent, { label: parent, children: [] });
-      if (!nodeMap.has(child)) nodeMap.set(child, { label: child, children: [] });
-      nodeMap.get(parent).children.push(nodeMap.get(child));
-      childrenSet.add(child);
-    });
-    const roots = [];
-    nodeMap.forEach((node, label) => {
-      if (!childrenSet.has(label)) roots.push(node);
-    });
-    if (!roots.length) return '';
-
-    function generateLegacyHTML(nodes) {
-      if (!nodes.length) return '';
-      return `<ul class="eu-tree-level">${nodes.map(node => `
-        <li class="eu-tree-node-wrapper">
-          <div class="eu-tree-node" style="--node-color: #3b82f6; background: #3b82f6; color: white">
-            <span class="eu-tree-label">${escapeHtml(node.label)}</span>
-          </div>
-          ${node.children.length ? generateLegacyHTML(node.children) : ''}
-        </li>
-      `).join('')}</ul>`;
-    }
-
-    const uid = `eu-ft-${Math.random().toString(36).slice(2,9)}`;
-    return `<div class="eu-family-tree-container my-4" id="${uid}" data-family-tree="true">
-      <div class="eu-family-tree-wrapper">
-        ${generateLegacyHTML(roots)}
-      </div>
-      <p class="eu-tree-caption">🗺️ Mapa Sinóptico (Actualizá a [family-tree])</p>
-    </div>`;
+    if (!lines.length) return '';
+    return buildSynopticMarkup(name, lines);
   });
 
   // ── CUADRO SINÓPTICO (legacy, keep working) ───────────────────────────────
@@ -235,9 +173,9 @@ function parseShortcodes(text) {
   // ── DEPRECATED: [interactive-diagram] → show migration notice ─────────────
   result = result.replace(/\[interactive-diagram(?:\s+[^\]]*)??\]([\s\S]*?)\[\/interactive-diagram\]/gi, () => {
     return `<div class="eu-alert alert alert-warning" style="font-size:.85rem">
-      <strong>⚠️ Diagrama interactivo deprecado.</strong> Por favor reemplaza con <code>[family-tree]</code>.<br>
+      <strong>⚠️ Diagrama interactivo deprecado.</strong> Por favor reemplaza con <code>[mapa-sinoptico]</code>.<br>
       <small>Ejemplo:<br>
-      <code>[family-tree name="Células"]<br>  [node label="Célula" color="#f59e0b"]<br>    [node label="Eucariota" color="#3b82f6"][/node]<br>  [/node]<br>[/family-tree]</code></small>
+      <code>[mapa-sinoptico name="Células"]<br>Célula -> Eucariota<br>Eucariota -> Procariota<br>[/mapa-sinoptico]</code></small>
     </div>`;
   });
 
@@ -359,6 +297,53 @@ function escapeHtml(str) {
   return String(str || '').replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
+}
+
+function buildSynopticMarkup(name, lines, colors = {}) {
+  if (!lines.length) return '';
+  const caption = escapeHtml(name || 'Mapa Sinóptico');
+  const safeCaption = escapeAttr(name || 'Mapa Sinóptico');
+  const payload = escapeHtml(lines.join('\n'));
+  const colorAttr = Object.keys(colors).length
+    ? ` data-node-colors="${escapeAttr(JSON.stringify(colors))}"`
+    : '';
+  const uid = `eu-ms-${Math.random().toString(36).slice(2,9)}`;
+  return `<div class="eu-mapa-sinoptico my-4" data-mapa-sinoptico="${uid}" data-caption="${safeCaption}"${colorAttr}>
+    <div class="eu-mapa-sinoptico-wrapper">
+      <svg class="eu-mapa-sinoptico-svg" aria-hidden="true" focusable="false"></svg>
+      <div class="eu-mapa-sinoptico-levels" role="presentation"></div>
+    </div>
+    <div class="eu-mapa-sinoptico-caption">${caption}</div>
+    <pre class="eu-mapa-sinoptico-data" hidden>${payload}</pre>
+  </div>`;
+}
+
+function parseTreeNodes(content) {
+  const nodes = [];
+  const nodeRegex = /\[node\s+label="([^"]+)"(?:\s+color="([^"]*)")?\]([\s\S]*?)\[\/node\]/gi;
+  let match;
+  while ((match = nodeRegex.exec(content)) !== null) {
+    const [, label, color, childrenContent] = match;
+    const safeColor = color || '#3b82f6';
+    const children = parseTreeNodes(childrenContent);
+    nodes.push({ label, color: safeColor, children });
+  }
+  return nodes;
+}
+
+function collectTreeEdges(nodes, parentLabel = null, edges = [], colors = {}) {
+  nodes.forEach(node => {
+    if (!colors[node.label]) {
+      colors[node.label] = node.color || '#3b82f6';
+    }
+    if (parentLabel) {
+      edges.push({ parent: parentLabel, child: node.label });
+    }
+    if (node.children.length) {
+      collectTreeEdges(node.children, node.label, edges, colors);
+    }
+  });
+  return { edges, colors };
 }
 
 /**
