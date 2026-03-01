@@ -125,33 +125,90 @@ function parseShortcodes(text) {
     return `<div class="eu-video-wrapper ratio ratio-16x9 my-3"><iframe src="https://www.youtube.com/embed/${id}" allowfullscreen loading="lazy" title="Video de YouTube"></iframe></div>`;
   });
 
-  // ── MAPA SINÓPTICO (new) — Mermaid-based tree diagram ──────────────────────
-  // Syntax: [mapa-sinoptico dir="LR"] or [mapa-sinoptico]
-  //   Célula -> Eucariota
-  //   Célula -> Procariota
-  //   Eucariota -> Animal
-  // [/mapa-sinoptico]
-  // dir options: LR (left-right, default), TD (top-down), RL, BT
+  // ── FAMILY TREE / MAPA CONCEPTUAL (NEW - renders a real tree)
+  result = result.replace(/\[family-tree(?:\s+name="([^"]*)")?\]([\s\S]*?)\[\/family-tree\]/gi, (_, name, body) => {
+    const treeName = name || 'Mapa Conceptual';
+    const uid = `eu-ft-${Math.random().toString(36).slice(2,9)}`;
+    
+    function parseNodes(content) {
+      const nodes = [];
+      const nodeRegex = /\[node\s+label="([^"]+)"(?:\s+color="([^"]*)")?\]([\s\S]*?)\[\/node\]/gi;
+      let match;
+      while ((match = nodeRegex.exec(content)) !== null) {
+        const [, label, color, childrenContent] = match;
+        const safeColor = color || '#3b82f6';
+        const children = parseNodes(childrenContent);
+        nodes.push({ label, color: safeColor, children });
+      }
+      return nodes;
+    }
+    
+    const rootNodes = parseNodes(body);
+    if (!rootNodes.length) return '';
+    
+    function generateTreeHTML(nodes) {
+      if (!nodes.length) return '';
+      return `<ul class="eu-tree-level">${nodes.map(node => `
+        <li class="eu-tree-node-wrapper">
+          <div class="eu-tree-node" style="--node-color: ${escapeAttr(node.color)}; background: ${escapeAttr(node.color)}; color: ${getContrastColor(node.color)}">
+            <span class="eu-tree-label">${escapeHtml(node.label)}</span>
+          </div>
+          ${node.children.length ? generateTreeHTML(node.children) : ''}
+        </li>
+      `).join('')}</ul>`;
+    }
+    
+    const treeHTML = generateTreeHTML(rootNodes);
+    
+    return `<div class="eu-family-tree-container my-4" id="${uid}" data-family-tree="true">
+      <div class="eu-family-tree-wrapper">
+        ${treeHTML}
+      </div>
+      <p class="eu-tree-caption">🗺️ ${escapeHtml(treeName)}</p>
+    </div>`;
+  });
+
+  // ── LEGACY: mapa-sinoptico (DEPRECATED, auto-converts to family-tree)
   result = result.replace(/\[mapa-sinoptico(?:\s+dir="([^"]*)")?\]([\s\S]*?)\[\/mapa-sinoptico\]/gi, (_, dir, body) => {
-    const validDirs = ['LR','RL','TD','BT','TB'];
-    const safeDir = validDirs.includes((dir||'LR').toUpperCase()) ? (dir||'LR').toUpperCase() : 'LR';
     const lines = body.split('\n').map(l => l.trim()).filter(l => l && l.includes('->'));
-    if (!lines.length) return '';
-    const sanitizeNode = n => {
-      const clean = n.replace(/"/g, "'").trim();
-      return /[\s\-\(\)\[\]\.,;:\/]/.test(clean) ? `"${clean}"` : clean;
-    };
-    const edges = lines.map(l => {
-      const parts = l.split(/-->?/).map(p => p.trim()).filter(Boolean);
-      if (parts.length < 2) return null;
-      return `  ${sanitizeNode(parts[0])} --> ${sanitizeNode(parts[1])}`;
-    }).filter(Boolean);
-    if (!edges.length) return '';
-    const mermaidCode = `graph ${safeDir}\n${edges.join('\n')}`;
-    const uid = `eu-ms-${Math.random().toString(36).slice(2,9)}`;
-    return `<div class="eu-mapa-sinoptico my-4" id="${uid}" data-mermaid="${escapeAttr(mermaidCode)}">
-      <div class="eu-mermaid-wrap"><div class="mermaid">${mermaidCode}</div></div>
-      <p class="text-center text-muted mt-2" style="font-size:.72rem">🗺️ Mapa Sinóptico</p>
+    const relationships = [];
+    lines.forEach(line => {
+      const parts = line.split(/-->?/).map(p => p.trim()).filter(Boolean);
+      if (parts.length === 2) relationships.push({ parent: parts[0], child: parts[1] });
+    });
+    if (!relationships.length) return '';
+    const nodeMap = new Map();
+    const childrenSet = new Set();
+    relationships.forEach(({ parent, child }) => {
+      if (!nodeMap.has(parent)) nodeMap.set(parent, { label: parent, children: [] });
+      if (!nodeMap.has(child)) nodeMap.set(child, { label: child, children: [] });
+      nodeMap.get(parent).children.push(nodeMap.get(child));
+      childrenSet.add(child);
+    });
+    const roots = [];
+    nodeMap.forEach((node, label) => {
+      if (!childrenSet.has(label)) roots.push(node);
+    });
+    if (!roots.length) return '';
+
+    function generateLegacyHTML(nodes) {
+      if (!nodes.length) return '';
+      return `<ul class="eu-tree-level">${nodes.map(node => `
+        <li class="eu-tree-node-wrapper">
+          <div class="eu-tree-node" style="--node-color: #3b82f6; background: #3b82f6; color: white">
+            <span class="eu-tree-label">${escapeHtml(node.label)}</span>
+          </div>
+          ${node.children.length ? generateLegacyHTML(node.children) : ''}
+        </li>
+      `).join('')}</ul>`;
+    }
+
+    const uid = `eu-ft-${Math.random().toString(36).slice(2,9)}`;
+    return `<div class="eu-family-tree-container my-4" id="${uid}" data-family-tree="true">
+      <div class="eu-family-tree-wrapper">
+        ${generateLegacyHTML(roots)}
+      </div>
+      <p class="eu-tree-caption">🗺️ Mapa Sinóptico (Actualizá a [family-tree])</p>
     </div>`;
   });
 
@@ -178,9 +235,9 @@ function parseShortcodes(text) {
   // ── DEPRECATED: [interactive-diagram] → show migration notice ─────────────
   result = result.replace(/\[interactive-diagram(?:\s+[^\]]*)??\]([\s\S]*?)\[\/interactive-diagram\]/gi, () => {
     return `<div class="eu-alert alert alert-warning" style="font-size:.85rem">
-      <strong>⚠️ Diagrama interactivo deprecado.</strong> Por favor reemplaza con <code>[mapa-sinoptico]</code>.<br>
+      <strong>⚠️ Diagrama interactivo deprecado.</strong> Por favor reemplaza con <code>[family-tree]</code>.<br>
       <small>Ejemplo:<br>
-      <code>[mapa-sinoptico dir="LR"]<br>Célula -> Eucariota<br>Célula -> Procariota<br>[/mapa-sinoptico]</code></small>
+      <code>[family-tree name="Células"]<br>  [node label="Célula" color="#f59e0b"]<br>    [node label="Eucariota" color="#3b82f6"][/node]<br>  [/node]<br>[/family-tree]</code></small>
     </div>`;
   });
 
