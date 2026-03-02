@@ -8,6 +8,7 @@ const cron = require('node-cron');
 const path = require('path');
 const db = require('./config/db');
 const { cleanOldLogs } = require('./middleware/rateLimit');
+const { authLimiter, loginLimiter, tokenSanityCheck } = require('./middleware/securityLimiter');
 
 const app = express();
 const PORT = process.env.PORT || 3594;
@@ -68,11 +69,28 @@ app.use('/media', express.static(path.join(STORAGE, 'images'), {
 }));
 
 // ─── RUTAS API ───────────────────────────────────────────────────
-const aiRouter = require('./ai/routes');
+const aiRouter       = require('./ai/routes');
 const articlesRouter = require('./routes/articles');
-const sourcesRoutes = require('./routes/sources');
+const sourcesRoutes  = require('./routes/sources');
 
-app.use('/api/auth', require('./routes/auth'));
+// Auth routes — layered security:
+//   authLimiter:      60 req / 10 min per IP across all auth endpoints
+//   tokenSanityCheck: fast-rejects garbage tokens, bans IPs after 10 strikes
+//   loginLimiter:     20 req / 15 min per IP only on login + register
+const authRouter = require('./routes/auth');
+app.use('/api/auth',
+  authLimiter,
+  tokenSanityCheck,
+  (req, res, next) => {
+    // Apply the tighter loginLimiter only to credential-submission endpoints
+    if ((req.method === 'POST') &&
+        (req.path === '/login' || req.path === '/register' || req.path === '/google')) {
+      return loginLimiter(req, res, next);
+    }
+    next();
+  },
+  authRouter
+);
 app.use('/api/ai', aiRouter);
 app.use('/api/articles', articlesRouter);
 app.use('/api/articles', sourcesRoutes.router);

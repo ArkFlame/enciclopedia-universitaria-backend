@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const https = require('https');
 const db = require('../config/db');
 const { requireAuth } = require('../middleware/auth');
 const { sanitizeString, sanitizeEmail } = require('../utils/sanitize');
@@ -9,7 +10,63 @@ const { generateVerificationToken, getTokenExpiry } = require('../utils/token');
 const { sendVerificationEmail }     = require('../email/sendVerificationEmail');
 const { sendPasswordResetEmail }    = require('../email/sendPasswordResetEmail');
 
-// POST /api/auth/register
+// ── Google token verification helper ───────────────────────────────────────
+// Uses Google's tokeninfo endpoint — no extra packages needed.
+// Returns the decoded payload or throws.
+function verifyGoogleToken(credential) {
+  return new Promise((resolve, reject) => {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if (!clientId) return reject(new Error('GOOGLE_CLIENT_ID not configured'));
+
+    const url = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`;
+
+    https.get(url, (res) => {
+      let raw = '';
+      res.on('data', chunk => raw += chunk);
+      res.on('end', () => {
+        try {
+          const payload = JSON.parse(raw);
+          if (payload.error) return reject(new Error('Token de Google inválido: ' + payload.error));
+          // Verify the token was issued for our app
+          if (payload.aud !== clientId) return reject(new Error('Token no corresponde a esta aplicación'));
+          if (payload.email_verified !== 'true' && payload.email_verified !== true) {
+            return reject(new Error('El correo de Google no está verificado'));
+          }
+          resolve(payload);
+        } catch (e) {
+          reject(new Error('Error procesando respuesta de Google'));
+        }
+      });
+    }).on('error', () => reject(new Error('No se pudo contactar a Google para verificar el token')));
+  });
+}
+
+// ── Username slug generator ─────────────────────────────────────────────────
+// Derives a clean username from a Google display name and deduplicates it.
+async function deriveUsername(displayName, email) {
+  // Start with the part before @ in email, or the display name
+  let base = (displayName || email.split('@')[0])
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9._-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+    .slice(0, 40) || 'user';
+
+  // Check for conflicts and append a number if needed
+  let candidate = base;
+  let suffix = 2;
+  while (true) {
+    const [rows] = await db.query('SELECT id FROM eu_users WHERE username = ?', [candidate]);
+    if (!rows.length) return candidate;
+    candidate = `${base}${suffix}`;
+    suffix++;
+    if (suffix > 9999) candidate = base + '_' + Date.now().toString().slice(-6);
+    if (suffix > 10000) break;
+  }
+  return candidate;
+}
+
 router.post('/register', async (req, res) => {
   try {
     const username = sanitizeString(req.body.username, 50);
@@ -418,6 +475,115 @@ router.post('/reset-password', async (req, res) => {
     res.json({ message: '¡Contraseña actualizada correctamente! Ya puedes iniciar sesión.' });
   } catch (err) {
     console.error('Error en reset-password:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+
+// POST /api/auth/google
+// Receives a Google ID token (credential) from the frontend Sign In With Google button.
+// Verifies it, then finds or creates a user account, and returns a JWT.
+router.post('/google', async (req, res) => {
+  try {
+    const { credential } = req.body;
+    if (!credential || typeof credential !== 'string') {
+      return res.status(400).json({ error: 'Token de Google no proporcionado', code: 'NO_CREDENTIAL' });
+    }
+
+    // ── 1. Verify the token with Google ──────────────────────────
+    let payload;
+    try {
+      payload = await verifyGoogleToken(credential);
+    } catch (err) {
+      console.error('[Google OAuth] Token verification failed:', err.message);
+      return res.status(401).json({ error: err.message, code: 'GOOGLE_TOKEN_INVALID' });
+    }
+
+    const googleId   = payload.sub;        // Stable unique ID
+    const googleEmail = (payload.email || '').toLowerCase().trim();
+    const googleName  = payload.name || '';
+    const googlePicture = payload.picture || null;
+
+    if (!googleEmail) {
+      return res.status(400).json({ error: 'Google no proporcionó un correo electrónico', code: 'NO_EMAIL' });
+    }
+
+    // ── 2. Find existing user by google_id OR email ───────────────
+    const [existingRows] = await db.query(
+      `SELECT id, username, email, role, google_id, monthly_expires_at,
+              articles_read_this_month, notification_count, email_verified
+       FROM eu_users WHERE google_id = ? OR email = ?`,
+      [googleId, googleEmail]
+    );
+
+    let user;
+
+    if (existingRows.length) {
+      user = existingRows[0];
+
+      // If found by email but google_id not yet linked, link it now
+      if (!user.google_id) {
+        await db.query(
+          'UPDATE eu_users SET google_id = ?, email_verified = 1 WHERE id = ?',
+          [googleId, user.id]
+        );
+        user.google_id      = googleId;
+        user.email_verified = 1;
+      }
+
+      // Handle expired MONTHLY subscription
+      if (user.role === 'MONTHLY' && user.monthly_expires_at && new Date(user.monthly_expires_at) < new Date()) {
+        await db.query('UPDATE eu_users SET role = ? WHERE id = ?', ['FREE', user.id]);
+        user.role = 'FREE';
+      }
+
+    } else {
+      // ── 3. Create a new user ────────────────────────────────────
+      const username = await deriveUsername(googleName, googleEmail);
+
+      const [result] = await db.query(
+        `INSERT INTO eu_users
+           (username, email, google_id, password_hash, role, email_verified)
+         VALUES (?, ?, ?, NULL, 'FREE', 1)`,
+        [username, googleEmail, googleId]
+      );
+
+      user = {
+        id:                      result.insertId,
+        username,
+        email:                   googleEmail,
+        role:                    'FREE',
+        google_id:               googleId,
+        email_verified:          1,
+        articles_read_this_month: 0,
+        notification_count:      0,
+        monthly_expires_at:      null
+      };
+    }
+
+    // ── 4. Issue JWT ────────────────────────────────────────────────
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    res.json({
+      token,
+      user: {
+        id:                   user.id,
+        username:             user.username,
+        email:                user.email,
+        role:                 user.role,
+        emailVerified:        true,  // Google accounts are always email-verified
+        articlesReadThisMonth: user.articles_read_this_month,
+        notificationCount:    user.notification_count,
+        freeLimit:            parseInt(process.env.FREE_ARTICLES_PER_MONTH) || 30
+      }
+    });
+
+  } catch (err) {
+    console.error('Error en /api/auth/google:', err);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
