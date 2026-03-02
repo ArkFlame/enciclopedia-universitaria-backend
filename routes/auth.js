@@ -137,6 +137,32 @@ router.put('/notifications/read', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// PUT /api/auth/notifications/:id/read
+router.put('/notifications/:id/read', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: 'ID inválido' });
+
+  await db.query(
+    'UPDATE eu_notifications SET read_at = NOW() WHERE id = ? AND user_id = ? AND read_at IS NULL',
+    [id, req.user.id]
+  );
+
+  const [[{ count }]] = await db.query(
+    'SELECT COUNT(*) AS count FROM eu_notifications WHERE user_id = ? AND read_at IS NULL',
+    [req.user.id]
+  );
+  await db.query('UPDATE eu_users SET notification_count = ? WHERE id = ?', [count, req.user.id]);
+
+  res.json({ ok: true, unread: count });
+});
+
+// DELETE /api/auth/notifications
+router.delete('/notifications', requireAuth, async (req, res) => {
+  await db.query('DELETE FROM eu_notifications WHERE user_id = ?', [req.user.id]);
+  await db.query('UPDATE eu_users SET notification_count = 0 WHERE id = ?', [req.user.id]);
+  res.json({ ok: true });
+});
+
 
 // POST /api/auth/refresh
 // Re-emite un JWT fresco con el rol actual de la DB.

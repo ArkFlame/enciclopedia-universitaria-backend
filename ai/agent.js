@@ -138,6 +138,44 @@ async function runAgentStream({
 
     messages.push({ role: 'assistant', content: response });
     messages.push({ role: 'user',      content: buildToolResultMessage(toolName, result) });
+
+    // Auto-read the best article after a search to guarantee content is used.
+    if (toolName === 'search_articles' && result?.articles?.length) {
+      const best = result.articles[0];
+      const slug = String(best?.slug || '').trim();
+      if (slug && !readSlugs.has(slug)) {
+        readSlugs.add(slug);
+
+        emit({
+          type: 'tool_start',
+          tool: 'get_article_content',
+          label: TOOL_LABELS.get_article_content || 'get_article_content',
+          message: buildProgressMessage('get_article_content', { slug })
+        });
+
+        let readResult;
+        try {
+          readResult = await executeTool('get_article_content', { slug });
+          if (readResult?.slug && readResult?.title) {
+            articleLinks.push({ slug: readResult.slug, title: readResult.title });
+          }
+          emit({
+            type:          'tool_done',
+            tool:          'get_article_content',
+            label:         TOOL_LABELS.get_article_content || 'get_article_content',
+            resultSummary: summarizeResult('get_article_content', readResult)
+          });
+        } catch (err) {
+          readResult = { error: err.message };
+          emit({ type: 'tool_error', tool: 'get_article_content', message: err.message });
+        }
+
+        // Inject a synthetic tool call so the model can use the content naturally.
+        const syntheticCall = `<tool_call>\n${JSON.stringify({ tool: 'get_article_content', params: { slug } })}\n</tool_call>`;
+        messages.push({ role: 'assistant', content: syntheticCall });
+        messages.push({ role: 'user', content: buildToolResultMessage('get_article_content', readResult) });
+      }
+    }
   }
 
   // Max iterations hit

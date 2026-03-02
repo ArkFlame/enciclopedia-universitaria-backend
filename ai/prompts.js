@@ -22,7 +22,7 @@ ${TOOL_SCHEMA_TEXT}
 
 ## FLUJO
 1. Si la pregunta necesita info de la enciclopedia → usa search_articles
-2. Si hay resultados relevantes → usa get_article_content en el mejor resultado  
+2. Si hay resultados relevantes → usa get_article_content en el mejor resultado antes de responder  
 3. Sintetiza y responde citando la fuente cuando uses la enciclopedia
 4. Si no hay info en la enciclopedia → responde con conocimiento general indicándolo
 
@@ -50,7 +50,16 @@ Usa este artículo como fuente principal para responder.`;
  * Build the tool result injection message.
  */
 function buildToolResultMessage(toolName, result) {
-  return `<tool_result tool="${toolName}">\n${JSON.stringify(result, null, 2)}\n</tool_result>\n\nCon esta información, responde al usuario de forma académica y concisa.`;
+  let extra = '';
+  if (toolName === 'search_articles') {
+    if (result?.articles?.length) {
+      const slug = result.articles[0]?.slug ? ` (slug: "${result.articles[0].slug}")` : '';
+      extra = `\n\nSiguiente paso: llama a get_article_content del mejor resultado${slug} antes de responder.`;
+    } else {
+      extra = '\n\nNo hay resultados: responde con conocimiento general indicando que no hay información en la enciclopedia.';
+    }
+  }
+  return `<tool_result tool="${toolName}">\n${JSON.stringify(result, null, 2)}\n</tool_result>\n\nCon esta información, responde al usuario de forma académica y concisa.${extra}`;
 }
 
 module.exports = { NANAMI_SYSTEM_PROMPT, buildArticleContextBlock, buildToolResultMessage };
