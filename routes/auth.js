@@ -6,7 +6,8 @@ const db = require('../config/db');
 const { requireAuth } = require('../middleware/auth');
 const { sanitizeString, sanitizeEmail } = require('../utils/sanitize');
 const { generateVerificationToken, getTokenExpiry } = require('../utils/token');
-const { sendVerificationEmail } = require('../email/sendVerificationEmail');
+const { sendVerificationEmail }     = require('../email/sendVerificationEmail');
+const { sendPasswordResetEmail }    = require('../email/sendPasswordResetEmail');
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
@@ -319,6 +320,104 @@ router.post('/resend-verification', requireAuth, async (req, res) => {
     res.json({ message: 'Correo de verificación reenviado. Revisa tu bandeja de entrada.' });
   } catch (err) {
     console.error('Error en resend-verification:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+
+// POST /api/auth/forgot-password
+// Accepts an email, sends a reset link if the account exists.
+// Always returns 200 to avoid user enumeration.
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const email = sanitizeEmail(req.body.email);
+    if (!email) return res.status(400).json({ error: 'El correo es obligatorio' });
+
+    // Always respond OK — don't reveal whether the account exists
+    const [rows] = await db.query(
+      'SELECT id, username, reset_expires_at FROM eu_users WHERE email = ?',
+      [email.toLowerCase()]
+    );
+
+    if (rows.length) {
+      const user = rows[0];
+
+      // Cooldown: max 1 reset email per 5 minutes
+      if (user.reset_expires_at) {
+        const issuedAt      = new Date(new Date(user.reset_expires_at).getTime() - 60 * 60 * 1000);
+        const cooldownUntil = new Date(issuedAt.getTime() + 5 * 60 * 1000);
+        if (new Date() < cooldownUntil) {
+          // Still return 200 to avoid enumeration, but don't send another email
+          return res.json({ message: 'Si ese correo está registrado, recibirás un enlace en breve.' });
+        }
+      }
+
+      const token   = generateVerificationToken();
+      const expires = new Date();
+      expires.setHours(expires.getHours() + 1); // 1 hour expiry
+
+      await db.query(
+        'UPDATE eu_users SET reset_token = ?, reset_expires_at = ? WHERE id = ?',
+        [token, expires, user.id]
+      );
+
+      try {
+        await sendPasswordResetEmail(email.toLowerCase(), user.username, token);
+      } catch (emailErr) {
+        console.error('Error enviando email de recuperación:', emailErr);
+      }
+    }
+
+    res.json({ message: 'Si ese correo está registrado, recibirás un enlace en breve.' });
+  } catch (err) {
+    console.error('Error en forgot-password:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+
+// POST /api/auth/reset-password
+// Accepts the token + new password, updates the hash and clears the token.
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || typeof token !== 'string' || token.length !== 64) {
+      return res.status(400).json({ error: 'Token inválido o malformado', code: 'INVALID_TOKEN' });
+    }
+
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres', code: 'PASSWORD_TOO_SHORT' });
+    }
+
+    const [rows] = await db.query(
+      'SELECT id, username, reset_expires_at FROM eu_users WHERE reset_token = ?',
+      [token]
+    );
+
+    if (!rows.length) {
+      return res.status(400).json({ error: 'El enlace no es válido o ya fue usado', code: 'TOKEN_NOT_FOUND' });
+    }
+
+    const user = rows[0];
+
+    if (!user.reset_expires_at || new Date(user.reset_expires_at) < new Date()) {
+      return res.status(400).json({
+        error: 'El enlace ha expirado. Solicita uno nuevo desde la pantalla de inicio de sesión.',
+        code: 'TOKEN_EXPIRED'
+      });
+    }
+
+    const hash = await bcrypt.hash(password, 12);
+
+    await db.query(
+      'UPDATE eu_users SET password_hash = ?, reset_token = NULL, reset_expires_at = NULL WHERE id = ?',
+      [hash, user.id]
+    );
+
+    res.json({ message: '¡Contraseña actualizada correctamente! Ya puedes iniciar sesión.' });
+  } catch (err) {
+    console.error('Error en reset-password:', err);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
