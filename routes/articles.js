@@ -288,6 +288,7 @@ router.post('/:id/edit', requireAuth, checkRateLimit('edit_article'), async (req
       : '';
     const content  = sanitizeContent(req.body.content);
     const editNote = sanitizeString(req.body.editNote, 1000);
+    const category = sanitizeString(req.body.category, 100) || null;
 
     if (!content) return res.status(400).json({ error: 'El contenido de la edición es obligatorio' });
 
@@ -300,9 +301,10 @@ router.post('/:id/edit', requireAuth, checkRateLimit('edit_article'), async (req
     await fs.writeFile(editPath, content, 'utf8');
 
     const [result] = await db.query(
-      `INSERT INTO eu_article_edits (article_id, editor_id, title, summary, content_path, edit_note, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'PENDING')`,
-      [articleId, req.user.id, title || null, summary || null, editPath, editNote || null]
+      `INSERT INTO eu_article_edits
+       (article_id, editor_id, title, summary, content_path, edit_note, category, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+      [articleId, req.user.id, title || null, summary || null, editPath, editNote || null, category]
     );
 
     // Notify mods/admins

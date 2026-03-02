@@ -100,7 +100,7 @@ router.get('/edits', requireAuth, requireMod, async (req, res) => {
     const params = st === 'ALL' ? [] : [st];
 
     const [rows] = await db.query(
-      `SELECT ae.id, ae.article_id, ae.title, ae.summary, ae.edit_note, ae.status,
+      `SELECT ae.id, ae.article_id, ae.title, ae.summary, ae.edit_note, ae.category, ae.status,
               ae.created_at, ae.rejection_reason, ae.reviewed_at,
               a.title AS article_title, a.slug AS article_slug,
               u.username AS editor_username, u.role AS editor_role,
@@ -133,7 +133,7 @@ router.get('/edit-preview/:editId', requireAuth, requireMod, async (req, res) =>
     if (!editId) return res.status(400).json({ error: 'ID inválido' });
 
     const [rows] = await db.query(
-      `SELECT ae.id, ae.title, ae.summary, ae.edit_note, ae.content_path AS edit_path,
+      `SELECT ae.id, ae.title, ae.summary, ae.category, ae.edit_note, ae.content_path AS edit_path,
               ae.status, ae.created_at,
               a.title AS original_title, a.summary AS original_summary,
               a.content_path AS original_path, a.slug,
@@ -192,8 +192,9 @@ router.put('/edits/:id/status', requireAuth, requireMod, async (req, res) => {
     if (status === 'APPROVED') {
       // Apply edit to the article
       const updates = {};
-      if (edit.title)   updates.title   = edit.title;
-      if (edit.summary) updates.summary = edit.summary;
+      if (edit.title)    updates.title    = edit.title;
+      if (edit.summary)  updates.summary  = edit.summary;
+      if (edit.category) updates.category = edit.category;
 
       if (edit.content_path) {
         try {
