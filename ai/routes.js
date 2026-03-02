@@ -58,7 +58,8 @@ router.post('/chat/stream', aiLimiter, optionalAuth, async (req, res) => {
       emit: send
     });
   } catch (err) {
-    console.error('[AI stream error]', err.message);
+    console.error('[AI /chat/stream] Unhandled error:', err.message);
+    console.error('[AI /chat/stream] Stack:', err.stack);
     send({ type: 'error', message: 'Error interno de Nanami AI. Inténtalo de nuevo.' });
   }
 
@@ -89,7 +90,8 @@ router.post('/chat', aiLimiter, optionalAuth, async (req, res) => {
       toolsUsed: result.toolsUsed?.map(t => ({ tool: t.tool, summary: t.params })) || []
     });
   } catch (err) {
-    console.error('[AI chat error]', err.message);
+    console.error('[AI /chat] Unhandled error:', err.message);
+    console.error('[AI /chat] Stack:', err.stack);
     res.status(500).json({ error: 'Error interno de Nanami AI. Inténtalo de nuevo.' });
   }
 });
@@ -110,7 +112,8 @@ router.post('/simple', aiLimiter, optionalAuth, async (req, res) => {
     const answer = await chat(messages, { maxTokens: Math.min(parseInt(maxTokens) || 600, 2000) });
     res.json({ answer });
   } catch (err) {
-    console.error('[AI simple error]', err.message);
+    console.error('[AI /simple] Error:', err.message);
+    console.error('[AI /simple] Stack:', err.stack);
     res.status(500).json({ error: err.message });
   }
 });
