@@ -101,7 +101,6 @@ CREATE TABLE IF NOT EXISTS eu_article_edits (
   content_path     VARCHAR(500) NULL COMMENT 'Ruta al .md de la edicion en disco',
   edit_note        TEXT         NULL,
   category         VARCHAR(100) NULL,
-  category         VARCHAR(100) NULL,
   status           ENUM('PENDING','APPROVED','REJECTED') NOT NULL DEFAULT 'PENDING',
   reviewed_by      BIGINT UNSIGNED NULL,
   reviewed_at      DATETIME     NULL,
