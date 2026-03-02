@@ -4,6 +4,7 @@ const fs       = require('fs').promises;
 const path     = require('path');
 const db       = require('../config/db');
 const { requireAuth, optionalAuth } = require('../middleware/auth');
+const { requireVerified }           = require('../middleware/requireVerified');
 const { checkRateLimit }            = require('../middleware/rateLimit');
 const { processArticleContent }     = require('../utils/shortcodeParser');
 const {
@@ -228,7 +229,7 @@ router.get('/:slug', optionalAuth, async (req, res) => {
 });
 
 // ── POST /api/articles — Create article ────────────────────────────────
-router.post('/', requireAuth, checkRateLimit('submit_article'), async (req, res) => {
+router.post('/', requireAuth, requireVerified, checkRateLimit('submit_article'), async (req, res) => {
   try {
     const title    = sanitizeString(req.body.title,   500);
     const summary  = sanitizeSummary(req.body.summary, 2000);
@@ -277,7 +278,7 @@ router.post('/', requireAuth, checkRateLimit('submit_article'), async (req, res)
 });
 
 // ── POST /api/articles/:id/edit — Propose an edit ──────────────────────
-router.post('/:id/edit', requireAuth, checkRateLimit('edit_article'), async (req, res) => {
+router.post('/:id/edit', requireAuth, requireVerified, checkRateLimit('edit_article'), async (req, res) => {
   try {
     const articleId = sanitizeInt(req.params.id, 1, 999999999);
     if (!articleId) return res.status(400).json({ error: 'ID inválido' });

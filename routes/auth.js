@@ -5,6 +5,8 @@ const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const { requireAuth } = require('../middleware/auth');
 const { sanitizeString, sanitizeEmail } = require('../utils/sanitize');
+const { generateVerificationToken, getTokenExpiry } = require('../utils/token');
+const { sendVerificationEmail } = require('../email/sendVerificationEmail');
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
@@ -33,19 +35,37 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({ error: 'El email o nombre de usuario ya está registrado' });
 
     const hash = await bcrypt.hash(password, 12);
+    const verificationToken = generateVerificationToken();
+    const verificationExpiry = getTokenExpiry();
+
     const [result] = await db.query(
-      'INSERT INTO eu_users (username, email, password_hash, role) VALUES (?, ?, ?, ?)',
-      [username, email.toLowerCase(), hash, 'FREE']
+      `INSERT INTO eu_users
+         (username, email, password_hash, role, email_verified, verification_token, verification_expires_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?)`,
+      [username, email.toLowerCase(), hash, 'FREE', verificationToken, verificationExpiry]
     );
+
+    // Send verification email (non-blocking — don't fail registration if email fails)
+    try {
+      await sendVerificationEmail(email.toLowerCase(), username, verificationToken);
+    } catch (emailErr) {
+      console.error('Error enviando email de verificación:', emailErr);
+    }
 
     const token = jwt.sign({ id: result.insertId, role: 'FREE' }, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRES_IN || '7d'
     });
 
     res.status(201).json({
-      message: 'Cuenta creada exitosamente',
+      message: 'Cuenta creada exitosamente. Revisa tu correo para verificar tu cuenta.',
       token,
-      user: { id: result.insertId, username, email: email.toLowerCase(), role: 'FREE' }
+      user: {
+        id: result.insertId,
+        username,
+        email: email.toLowerCase(),
+        role: 'FREE',
+        emailVerified: false
+      }
     });
   } catch (err) {
     console.error('Error en registro:', err);
@@ -62,7 +82,7 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email y contraseña son obligatorios' });
 
     const [rows] = await db.query(
-      'SELECT id, username, email, password_hash, role, monthly_expires_at, articles_read_this_month, notification_count FROM eu_users WHERE email = ?',
+      'SELECT id, username, email, password_hash, role, monthly_expires_at, articles_read_this_month, notification_count, email_verified FROM eu_users WHERE email = ?',
       [email.toLowerCase()]
     );
 
@@ -91,6 +111,7 @@ router.post('/login', async (req, res) => {
         username: user.username,
         email: user.email,
         role: user.role,
+        emailVerified: !!user.email_verified,
         articlesReadThisMonth: user.articles_read_this_month,
         notificationCount: user.notification_count,
         freeLimit: parseInt(process.env.FREE_ARTICLES_PER_MONTH) || 30
@@ -110,6 +131,7 @@ router.get('/me', requireAuth, async (req, res) => {
     username: u.username,
     email: u.email,
     role: u.role,
+    emailVerified: !!u.email_verified,
     articlesReadThisMonth: u.articles_read_this_month,
     notificationCount: u.notification_count,
     freeLimit: parseInt(process.env.FREE_ARTICLES_PER_MONTH) || 30
@@ -202,5 +224,104 @@ router.post('/refresh', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
+
+// GET /api/auth/verify-email?token=xxx
+// Verifies the user's email address using the token sent by email.
+router.get('/verify-email', async (req, res) => {
+  try {
+    const { token } = req.query;
+
+    if (!token || typeof token !== 'string' || token.length !== 64) {
+      return res.status(400).json({ error: 'Token inválido o malformado', code: 'INVALID_TOKEN' });
+    }
+
+    const [rows] = await db.query(
+      'SELECT id, username, email_verified, verification_expires_at FROM eu_users WHERE verification_token = ?',
+      [token]
+    );
+
+    if (!rows.length) {
+      return res.status(400).json({ error: 'El token no existe o ya fue usado', code: 'TOKEN_NOT_FOUND' });
+    }
+
+    const user = rows[0];
+
+    if (user.email_verified) {
+      return res.json({ message: 'Tu cuenta ya estaba verificada.', alreadyVerified: true });
+    }
+
+    if (user.verification_expires_at && new Date(user.verification_expires_at) < new Date()) {
+      return res.status(400).json({
+        error: 'El token ha expirado. Solicita un nuevo enlace de verificación.',
+        code: 'TOKEN_EXPIRED'
+      });
+    }
+
+    await db.query(
+      'UPDATE eu_users SET email_verified = 1, verification_token = NULL, verification_expires_at = NULL WHERE id = ?',
+      [user.id]
+    );
+
+    res.json({ message: '¡Cuenta verificada exitosamente! Ya puedes publicar y editar artículos.' });
+  } catch (err) {
+    console.error('Error en verify-email:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+
+// POST /api/auth/resend-verification
+// Resends the verification email. Requires authentication.
+// Rate-limited: max 1 resend per 5 minutes.
+router.post('/resend-verification', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    if (req.user.email_verified) {
+      return res.status(400).json({ error: 'Tu cuenta ya está verificada', code: 'ALREADY_VERIFIED' });
+    }
+
+    // Simple cooldown: check if a token was already issued recently (< 5 min ago)
+    const [rows] = await db.query(
+      'SELECT verification_expires_at FROM eu_users WHERE id = ?',
+      [userId]
+    );
+
+    if (rows.length && rows[0].verification_expires_at) {
+      const expiresAt = new Date(rows[0].verification_expires_at);
+      const issuedAt  = new Date(expiresAt.getTime() - 24 * 60 * 60 * 1000);
+      const cooldownUntil = new Date(issuedAt.getTime() + 5 * 60 * 1000);
+      if (new Date() < cooldownUntil) {
+        const waitSeconds = Math.ceil((cooldownUntil - new Date()) / 1000);
+        return res.status(429).json({
+          error: `Espera ${waitSeconds} segundos antes de solicitar otro correo.`,
+          code: 'RESEND_COOLDOWN',
+          waitSeconds
+        });
+      }
+    }
+
+    const newToken  = generateVerificationToken();
+    const newExpiry = getTokenExpiry();
+
+    await db.query(
+      'UPDATE eu_users SET verification_token = ?, verification_expires_at = ? WHERE id = ?',
+      [newToken, newExpiry, userId]
+    );
+
+    try {
+      await sendVerificationEmail(req.user.email, req.user.username, newToken);
+    } catch (emailErr) {
+      console.error('Error reenviando email de verificación:', emailErr);
+      return res.status(500).json({ error: 'No se pudo enviar el correo. Intenta más tarde.' });
+    }
+
+    res.json({ message: 'Correo de verificación reenviado. Revisa tu bandeja de entrada.' });
+  } catch (err) {
+    console.error('Error en resend-verification:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
 
 module.exports = router;

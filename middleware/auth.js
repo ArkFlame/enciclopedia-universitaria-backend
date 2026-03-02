@@ -15,7 +15,7 @@ const optionalAuth = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const [rows] = await db.query(
       `SELECT id, username, email, role, monthly_expires_at,
-              articles_read_this_month, articles_read_reset_at, notification_count
+              articles_read_this_month, articles_read_reset_at, notification_count, email_verified
        FROM eu_users WHERE id = ?`,
       [decoded.id]
     );
@@ -45,7 +45,7 @@ const requireAuth = async (req, res, next) => {
 
     const [rows] = await db.query(
       `SELECT id, username, email, role, monthly_expires_at,
-              articles_read_this_month, articles_read_reset_at, notification_count
+              articles_read_this_month, articles_read_reset_at, notification_count, email_verified
        FROM eu_users WHERE id = ?`,
       [decoded.id]
     );
