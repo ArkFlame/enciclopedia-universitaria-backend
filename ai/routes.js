@@ -40,7 +40,9 @@ router.post('/chat/stream', aiLimiter, optionalAuth, async (req, res) => {
 
   const send = (data) => {
     if (!res.writableEnded) {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
+      const jsonString = JSON.stringify(data);
+      const payload = `data: ${jsonString}\n\n`;
+      res.write(Buffer.from(payload, 'utf8'));
     }
   };
 
