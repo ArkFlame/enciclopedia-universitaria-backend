@@ -12,7 +12,8 @@ function headers() {
     'Authorization': `Bearer ${API_KEY()}`,
     'Content-Type': 'application/json',
     'HTTP-Referer': process.env.FRONTEND_URL || 'https://enciclopedia-universitaria.com',
-    'X-Title': 'Enciclopedia Universitaria — Nanami AI'
+    // Header values must be ByteString-compatible (0-255). Avoid Unicode punctuation like em-dash (U+2014).
+    'X-Title': 'Enciclopedia Universitaria - Nanami AI'
   };
 }
 
