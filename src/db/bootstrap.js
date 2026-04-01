@@ -128,6 +128,42 @@ ALTER TABLE eu_notifications
   ADD COLUMN IF NOT EXISTS article_slug VARCHAR(255) NULL,
   ADD COLUMN IF NOT EXISTS notification_url VARCHAR(500) NULL;
 
+CREATE TABLE IF NOT EXISTS eu_article_sources (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  article_id BIGINT UNSIGNED NOT NULL,
+  type VARCHAR(50) NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  url TEXT NULL,
+  pdf_original_name VARCHAR(255) NULL,
+  pdf_storage_path VARCHAR(500) NULL,
+  pdf_mime_type VARCHAR(100) NULL,
+  pdf_size BIGINT UNSIGNED NULL,
+  favicon_url VARCHAR(500) NULL,
+  display_order INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_eu_article_sources_article
+    FOREIGN KEY (article_id) REFERENCES eu_articles(id) ON DELETE CASCADE,
+  INDEX idx_eu_article_sources_article (article_id),
+  INDEX idx_eu_article_sources_order (article_id, display_order, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS eu_source_downloads (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  source_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NULL,
+  downloaded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ip_address VARCHAR(45) NULL,
+  user_agent TEXT NULL,
+  CONSTRAINT fk_eu_source_downloads_source
+    FOREIGN KEY (source_id) REFERENCES eu_article_sources(id) ON DELETE CASCADE,
+  CONSTRAINT fk_eu_source_downloads_user
+    FOREIGN KEY (user_id) REFERENCES eu_users(id) ON DELETE SET NULL,
+  INDEX idx_eu_source_downloads_source (source_id),
+  INDEX idx_eu_source_downloads_user (user_id),
+  INDEX idx_eu_source_downloads_downloaded_at (downloaded_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 ALTER TABLE eu_categories
   ADD COLUMN IF NOT EXISTS description TEXT NULL,
   ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0,

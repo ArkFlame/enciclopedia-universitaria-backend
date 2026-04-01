@@ -19,12 +19,16 @@ router.get('/articles', requireAuth, requireMod, async (req, res) => {
 
     const [rows] = await db.query(
       `SELECT a.id, a.slug, a.title, a.summary, a.status, a.category,
+              a.category_id, a.subcategory_id,
               a.created_at, a.updated_at, a.rejection_reason, a.reviewed_at,
               u.username AS author_username, u.email AS author_email, u.role AS author_role,
-              ru.username AS reviewer_username
+              ru.username AS reviewer_username,
+              c.name AS category_name, sc.name AS subcategory_name
        FROM eu_articles a
        JOIN eu_users u ON a.author_id = u.id
        LEFT JOIN eu_users ru ON a.reviewed_by = ru.id
+       LEFT JOIN eu_categories c ON c.id = a.category_id AND c.is_active = 1
+       LEFT JOIN eu_subcategories sc ON sc.id = a.subcategory_id AND sc.is_active = 1
        ${where}
        ORDER BY a.created_at DESC LIMIT ? OFFSET ?`,
       [...params, limit, offset]
@@ -133,14 +137,22 @@ router.get('/edit-preview/:editId', requireAuth, requireMod, async (req, res) =>
     if (!editId) return res.status(400).json({ error: 'ID inválido' });
 
     const [rows] = await db.query(
-      `SELECT ae.id, ae.title, ae.summary, ae.category, ae.edit_note, ae.content_path AS edit_path,
+      `SELECT ae.id, ae.title, ae.summary, ae.category, ae.category_id, ae.subcategory_id,
+              ae.edit_note, ae.content_path AS edit_path,
               ae.status, ae.created_at,
               a.title AS original_title, a.summary AS original_summary,
               a.content_path AS original_path, a.slug,
-              u.username AS editor_username
+              a.category_id AS original_category_id, a.subcategory_id AS original_subcategory_id,
+              u.username AS editor_username,
+              c.name AS category_name, sc.name AS subcategory_name,
+              oc.name AS original_category_name, osc.name AS original_subcategory_name
        FROM eu_article_edits ae
        JOIN eu_articles a ON ae.article_id = a.id
        JOIN eu_users u ON ae.editor_id = u.id
+       LEFT JOIN eu_categories c ON c.id = ae.category_id AND c.is_active = 1
+       LEFT JOIN eu_subcategories sc ON sc.id = ae.subcategory_id AND sc.is_active = 1
+       LEFT JOIN eu_categories oc ON oc.id = a.category_id AND oc.is_active = 1
+       LEFT JOIN eu_subcategories osc ON osc.id = a.subcategory_id AND osc.is_active = 1
        WHERE ae.id = ?`,
       [editId]
     );
@@ -194,7 +206,10 @@ router.put('/edits/:id/status', requireAuth, requireMod, async (req, res) => {
       const updates = {};
       if (edit.title)    updates.title    = edit.title;
       if (edit.summary)  updates.summary  = edit.summary;
-      if (edit.category) updates.category = edit.category;
+      if (edit.category)     updates.category      = edit.category;
+      if (edit.subcategory)  updates.subcategory   = edit.subcategory;
+      if ('category_id' in edit)     updates.category_id     = edit.category_id;
+      if ('subcategory_id' in edit)  updates.subcategory_id  = edit.subcategory_id;
 
       if (edit.content_path) {
         try {

@@ -14,6 +14,7 @@ async function listCategoriesTree() {
     description: categories.description,
     sortOrder: categories.sortOrder,
     isActive: categories.isActive,
+    color: categories.color,
   })
     .from(categories)
     .where(eq(categories.isActive, '1'))

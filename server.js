@@ -238,7 +238,16 @@ async function runBootstrap() {
       console.log(`[BOOTSTRAP] Runtime Drizzle database: "${state.drizzleDbName}"`);
     });
   } catch (error) {
-    console.error('[STARTUP] Fatal error during bootstrap:', error);
+    const sqlPreview = typeof error?.sql === 'string'
+      ? error.sql.replace(/\s+/g, ' ').slice(0, 240)
+      : null;
+
+    console.error('[BOOTSTRAP] Fatal startup error');
+    console.error('  message:', error?.message || 'unknown');
+    if (error?.code) console.error('  code:', error.code);
+    if (error?.sqlState) console.error('  sqlState:', error.sqlState);
+    if (sqlPreview) console.error('  sqlPreview:', sqlPreview);
+
     process.exit(1);
   }
 })();

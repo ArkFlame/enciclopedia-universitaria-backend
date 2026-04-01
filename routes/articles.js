@@ -75,7 +75,7 @@ router.get('/', optionalAuth, async (req, res) => {
     if (categoryId) {
       selectedCategory = await categoryRepo.getCategoryById(categoryId);
 
-      if (!selectedCategory) {
+      if (!selectedCategory || !selectedCategory.is_active) {
         return res.json({ articles: [], total: 0, page, pageSize });
       }
 
@@ -84,7 +84,7 @@ router.get('/', optionalAuth, async (req, res) => {
     } else if (categorySlug) {
       selectedCategory = await categoryRepo.getCategoryBySlug(categorySlug);
 
-      if (!selectedCategory) {
+      if (!selectedCategory || !selectedCategory.is_active) {
         return res.json({ articles: [], total: 0, page, pageSize });
       }
 
@@ -99,7 +99,7 @@ router.get('/', optionalAuth, async (req, res) => {
 
       selectedSubcategory = await categoryRepo.getSubcategoryById(subcategoryId);
 
-      if (!selectedSubcategory || selectedSubcategory.categoryId !== selectedCategory.id) {
+      if (!selectedSubcategory || !selectedSubcategory.is_active || selectedSubcategory.categoryId !== selectedCategory.id) {
         return res.json({ articles: [], total: 0, page, pageSize });
       }
 
@@ -112,7 +112,7 @@ router.get('/', optionalAuth, async (req, res) => {
 
       selectedSubcategory = await categoryRepo.getSubcategoryBySlug(selectedCategory.id, subcategorySlug);
 
-      if (!selectedSubcategory) {
+      if (!selectedSubcategory || !selectedSubcategory.is_active) {
         return res.json({ articles: [], total: 0, page, pageSize });
       }
 
@@ -142,8 +142,8 @@ router.get('/', optionalAuth, async (req, res) => {
           (SELECT COUNT(*) FROM eu_media m WHERE m.article_id = a.id) AS image_count
        FROM eu_articles a
        JOIN eu_users u ON a.author_id = u.id
-       LEFT JOIN eu_categories c ON c.id = a.category_id
-       LEFT JOIN eu_subcategories sc ON sc.id = a.subcategory_id
+       LEFT JOIN eu_categories c ON c.id = a.category_id AND c.is_active = 1
+       LEFT JOIN eu_subcategories sc ON sc.id = a.subcategory_id AND sc.is_active = 1
        ${where}
        ORDER BY a.${sort} DESC
        LIMIT ? OFFSET ?`,
@@ -166,7 +166,12 @@ router.get('/', optionalAuth, async (req, res) => {
 // MUST be before /:slug to avoid route conflict
 router.get('/meta/categories', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM eu_categories ORDER BY name');
+    const [rows] = await db.query(
+      `SELECT id, slug, name, color, description, sort_order
+       FROM eu_categories
+       WHERE is_active = 1
+       ORDER BY sort_order ASC, name ASC`
+    );
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: 'Error al obtener categorías' });
@@ -248,8 +253,8 @@ router.get('/:slug', optionalAuth, async (req, res) => {
        FROM eu_articles a
        JOIN eu_users u ON a.author_id = u.id
        LEFT JOIN eu_users ru ON a.reviewed_by = ru.id
-       LEFT JOIN eu_categories c ON c.id = a.category_id
-       LEFT JOIN eu_subcategories sc ON sc.id = a.subcategory_id
+       LEFT JOIN eu_categories c ON c.id = a.category_id AND c.is_active = 1
+       LEFT JOIN eu_subcategories sc ON sc.id = a.subcategory_id AND sc.is_active = 1
        WHERE a.slug = ? AND ${statusFilter}`,
       [slug]
     );
@@ -306,11 +311,25 @@ router.get('/:slug', optionalAuth, async (req, res) => {
       if (coverRows.length) coverImage = coverRows[0];
     }
 
-    const [sources] = await db.query(
-      `SELECT id, type, title, url, pdf_original_name, pdf_size, favicon_url 
-       FROM eu_article_sources WHERE article_id = ? ORDER BY display_order ASC, created_at ASC`,
-      [article.id]
-    );
+    let sources = [];
+
+    try {
+      const [sourceRows] = await db.query(
+        `SELECT id, type, title, url, pdf_original_name, pdf_size, favicon_url
+         FROM eu_article_sources
+         WHERE article_id = ?
+         ORDER BY display_order ASC, created_at ASC`,
+        [article.id]
+      );
+      sources = sourceRows;
+    } catch (err) {
+      if (err && err.code === 'ER_NO_SUCH_TABLE') {
+        console.warn('[Articles] eu_article_sources missing in runtime DB, returning empty sources list.');
+        sources = [];
+      } else {
+        throw err;
+      }
+    }
     const formattedSources = sources.map(s => ({
       ...s,
       download_url: s.type === 'pdf' ? `/api/sources/pdf/${s.id}` : s.url

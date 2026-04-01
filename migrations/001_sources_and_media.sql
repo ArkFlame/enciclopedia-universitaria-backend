@@ -7,8 +7,8 @@
 -- Stores links and PDF sources for articles
 -- ============================================================
 CREATE TABLE IF NOT EXISTS eu_article_sources (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  article_id INT NOT NULL,
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  article_id BIGINT UNSIGNED NOT NULL,
   type ENUM('link', 'pdf') NOT NULL,
   title VARCHAR(500) NOT NULL,
   url VARCHAR(2000),
@@ -30,9 +30,9 @@ CREATE TABLE IF NOT EXISTS eu_article_sources (
 -- Tracks PDF downloads for rate limiting
 -- ============================================================
 CREATE TABLE IF NOT EXISTS eu_source_downloads (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  source_id INT NOT NULL,
-  user_id INT,
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  source_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED,
   ip_address VARCHAR(45),
   downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (source_id) REFERENCES eu_article_sources(id) ON DELETE CASCADE,

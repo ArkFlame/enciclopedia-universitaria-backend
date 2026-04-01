@@ -5,6 +5,7 @@ const categories = mysqlTable('eu_categories', {
   id: serial('id').primaryKey(),
   name: varchar('name', { length: 100 }).notNull(),
   slug: varchar('slug', { length: 100 }).notNull().unique(),
+  color: varchar('color', { length: 7 }).notNull().default('#000000'),
   description: text('description'),
   sortOrder: int('sort_order').notNull().default(0),
   isActive: mysqlEnum('is_active', ['0', '1']).notNull().default('1'),
