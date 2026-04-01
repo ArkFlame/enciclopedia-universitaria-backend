@@ -11,7 +11,7 @@ const {
   sanitizeSearchQuery, sanitizeString, sanitizeInt,
   sanitizeSlug, sanitizeStatus, sanitizeContent, sanitizeSummary
 } = require('../utils/sanitize');
-const categoryRepo = require('../repositories/categories');
+const categoryRepo = require('../src/repositories/categories');
 
 const STORAGE = process.env.STORAGE_PATH || path.join(__dirname, '../storage');
 const BASE_URL = process.env.BASE_URL || '';
@@ -32,22 +32,26 @@ async function ensureDir(dir) {
 // ── GET /api/articles — List articles ──────────────────────────────────
 router.get('/', optionalAuth, async (req, res) => {
   try {
-    const rawQuery      = req.query.query      || req.query.q || '';
-    const rawCategory   = req.query.category   || '';
-    const rawSubcategory = req.query.subcategory || '';
-    const rawPage       = req.query.page;
-    const rawLimit      = req.query.limit;
-    const rawSort       = req.query.sort || 'recent';
-    const includePending = req.query.includePending === 'true';
+    const rawQuery         = req.query.query || req.query.q || '';
+    const rawCategory      = req.query.category || '';
+    const rawSubcategory   = req.query.subcategory || '';
+    const rawCategoryId    = req.query.categoryId;
+    const rawSubcategoryId = req.query.subcategoryId;
+    const rawPage          = req.query.page;
+    const rawLimit         = req.query.limit;
+    const rawSort          = req.query.sort || 'recent';
+    const includePending   = req.query.includePending === 'true';
 
     // Sanitize all inputs
-    const searchQuery   = sanitizeSearchQuery(rawQuery);
-    const categorySlug    = sanitizeSlug(rawCategory);
-    const subcategorySlug = sanitizeSlug(rawSubcategory);
-    const page          = sanitizeInt(rawPage, 1, 9999, 1);
-    const pageSize      = sanitizeInt(rawLimit, 1, 50, 20);
-    const offset        = (page - 1) * pageSize;
-    const sort          = rawSort === 'popular' ? 'views' : 'created_at';
+    const searchQuery      = sanitizeSearchQuery(rawQuery);
+    const categorySlug     = sanitizeSlug(rawCategory);
+    const subcategorySlug  = sanitizeSlug(rawSubcategory);
+    const categoryId       = sanitizeInt(rawCategoryId, 1, 999999999, null);
+    const subcategoryId    = sanitizeInt(rawSubcategoryId, 1, 999999999, null);
+    const page             = sanitizeInt(rawPage, 1, 9999, 1);
+    const pageSize         = sanitizeInt(rawLimit, 1, 50, 20);
+    const offset           = (page - 1) * pageSize;
+    const sort             = rawSort === 'popular' ? 'views' : 'created_at';
 
     const conditions = [];
     const params     = [];
@@ -68,7 +72,16 @@ router.get('/', optionalAuth, async (req, res) => {
     let selectedCategory = null;
     let selectedSubcategory = null;
 
-    if (categorySlug) {
+    if (categoryId) {
+      selectedCategory = await categoryRepo.getCategoryById(categoryId);
+
+      if (!selectedCategory) {
+        return res.json({ articles: [], total: 0, page, pageSize });
+      }
+
+      conditions.push('(a.category_id = ? OR (a.category_id IS NULL AND a.category = ?))');
+      params.push(selectedCategory.id, selectedCategory.name);
+    } else if (categorySlug) {
       selectedCategory = await categoryRepo.getCategoryBySlug(categorySlug);
 
       if (!selectedCategory) {
@@ -79,7 +92,20 @@ router.get('/', optionalAuth, async (req, res) => {
       params.push(selectedCategory.id, selectedCategory.name);
     }
 
-    if (subcategorySlug) {
+    if (subcategoryId) {
+      if (!selectedCategory) {
+        return res.status(400).json({ error: 'No se puede filtrar por subcategoría sin categoría' });
+      }
+
+      selectedSubcategory = await categoryRepo.getSubcategoryById(subcategoryId);
+
+      if (!selectedSubcategory || selectedSubcategory.categoryId !== selectedCategory.id) {
+        return res.json({ articles: [], total: 0, page, pageSize });
+      }
+
+      conditions.push('(a.subcategory_id = ? OR (a.subcategory_id IS NULL AND a.subcategory = ?))');
+      params.push(selectedSubcategory.id, selectedSubcategory.name);
+    } else if (subcategorySlug) {
       if (!selectedCategory) {
         return res.status(400).json({ error: 'No se puede filtrar por subcategoría sin categoría' });
       }
