@@ -52,6 +52,8 @@ async function listActiveCategories() {
     name: categories.name,
     description: categories.description,
     sortOrder: categories.sortOrder,
+    isActive: categories.isActive,
+    color: categories.color,
   })
     .from(categories)
     .where(eq(categories.isActive, '1'))
@@ -82,6 +84,7 @@ async function getCategoryBySlug(slug) {
     description: categories.description,
     sortOrder: categories.sortOrder,
     isActive: categories.isActive,
+    color: categories.color,
   })
     .from(categories)
     .where(and(
@@ -119,6 +122,7 @@ async function getCategoryById(id) {
     description: categories.description,
     sortOrder: categories.sortOrder,
     isActive: categories.isActive,
+    color: categories.color,
   })
     .from(categories)
     .where(eq(categories.id, id));
@@ -149,6 +153,7 @@ async function createCategory(input) {
       description: input.description || null,
       sortOrder: input.sortOrder || 0,
       isActive: toDbFlag(input.isActive !== undefined ? input.isActive : true),
+      color: input.color || '#000000',
     })
     .$returningId();
 
@@ -163,6 +168,7 @@ async function updateCategory(id, input) {
   if (input.description !== undefined) updates.description = input.description;
   if (input.sortOrder !== undefined) updates.sortOrder = input.sortOrder;
   if (input.isActive !== undefined) updates.isActive = toDbFlag(input.isActive);
+  if (input.color !== undefined) updates.color = input.color;
 
   if (!Object.keys(updates).length) return null;
 
@@ -220,6 +226,32 @@ async function deleteSubcategory(id) {
   return getSubcategoryById(id);
 }
 
+async function reorderCategories(orderedIds) {
+  const updates = orderedIds.map((id, index) => ({
+    id,
+    sortOrder: index,
+  }));
+
+  for (const { id, sortOrder } of updates) {
+    await db.update(categories)
+      .set({ sortOrder })
+      .where(eq(categories.id, id));
+  }
+}
+
+async function reorderSubcategories(orderedIds) {
+  const updates = orderedIds.map((id, index) => ({
+    id,
+    sortOrder: index,
+  }));
+
+  for (const { id, sortOrder } of updates) {
+    await db.update(subcategories)
+      .set({ sortOrder })
+      .where(eq(subcategories.id, id));
+  }
+}
+
 module.exports = {
   listCategoriesTree,
   listActiveCategories,
@@ -234,4 +266,6 @@ module.exports = {
   deleteSubcategory,
   getCategoryById,
   getSubcategoryById,
+  reorderCategories,
+  reorderSubcategories,
 };

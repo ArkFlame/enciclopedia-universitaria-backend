@@ -26,13 +26,14 @@ router.get('/categories', requireAuth, requireMod, async (req, res) => {
 
 router.post('/categories', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { slug, name, description, sortOrder, isActive } = req.body;
+    const { slug, name, description, sortOrder, isActive, color } = req.body;
 
     const cleanSlug = sanitizeSlug(slug);
     const cleanName = sanitizeString(name, 200);
     const cleanDesc = description ? sanitizeString(description, 2000) : '';
     const cleanOrder = sanitizeInt(sortOrder, 0, 9999, 0);
     const active = isActive === true || isActive === 'true';
+    const cleanColor = /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#000000';
 
     if (!cleanSlug) return res.status(400).json({ error: 'Slug inválido' });
     if (!cleanName) return res.status(400).json({ error: 'Nombre inválido' });
@@ -43,6 +44,7 @@ router.post('/categories', requireAuth, requireAdmin, async (req, res) => {
       description: cleanDesc || null,
       sortOrder: cleanOrder,
       isActive: active,
+      color: cleanColor,
     });
 
     res.status(201).json({ message: 'Categoría creada', id: created && created.insertId });
@@ -60,7 +62,7 @@ router.patch('/categories/:id', requireAuth, requireAdmin, async (req, res) => {
     const existing = await categoriesRepo.getCategoryById(id);
     if (!existing) return res.status(404).json({ error: 'Categoría no encontrada' });
 
-    const { slug, name, description, sortOrder, isActive } = req.body;
+    const { slug, name, description, sortOrder, isActive, color } = req.body;
     const updates = {};
 
     if (slug !== undefined) {
@@ -81,6 +83,9 @@ router.patch('/categories/:id', requireAuth, requireAdmin, async (req, res) => {
     }
     if (isActive !== undefined) {
       updates.isActive = isActive === true || isActive === 'true';
+    }
+    if (color !== undefined) {
+      if (/^#[0-9a-fA-F]{6}$/.test(color)) updates.color = color;
     }
 
     if (Object.keys(updates).length === 0) {
@@ -108,6 +113,28 @@ router.delete('/categories/:id', requireAuth, requireAdmin, async (req, res) => 
   } catch (err) {
     console.error('DELETE /admin/categories/:id:', err);
     res.status(500).json({ error: 'Error al eliminar categoría' });
+  }
+});
+
+router.put('/categories/reorder', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { orderedIds } = req.body;
+
+    if (!Array.isArray(orderedIds)) {
+      return res.status(400).json({ error: 'orderedIds debe ser un array' });
+    }
+
+    const validated = orderedIds.map((id, index) => {
+      const clean = sanitizeInt(id, 1, 999999999);
+      if (!clean) throw new Error(`ID inválido en posición ${index}`);
+      return clean;
+    });
+
+    await categoriesRepo.reorderCategories(validated);
+    res.json({ message: 'Orden actualizado' });
+  } catch (err) {
+    console.error('PUT /admin/categories/reorder:', err);
+    res.status(500).json({ error: err.message || 'Error al reordenar categorías' });
   }
 });
 
@@ -209,6 +236,38 @@ router.delete('/subcategories/:id', requireAuth, requireAdmin, async (req, res) 
   } catch (err) {
     console.error('DELETE /admin/subcategories/:id:', err);
     res.status(500).json({ error: 'Error al eliminar subcategoría' });
+  }
+});
+
+router.put('/categories/:id/subcategories/reorder', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const categoryId = sanitizeInt(req.params.id, 1, 999999999);
+    if (!categoryId) return res.status(400).json({ error: 'ID inválido' });
+
+    const { orderedIds } = req.body;
+    if (!Array.isArray(orderedIds)) {
+      return res.status(400).json({ error: 'orderedIds debe ser un array' });
+    }
+
+    const validated = orderedIds.map((id, index) => {
+      const clean = sanitizeInt(id, 1, 999999999);
+      if (!clean) throw new Error(`ID inválido en posición ${index}`);
+      return clean;
+    });
+
+    const subcats = await categoriesRepo.listSubcategoriesByCategoryId(categoryId);
+    const subcatIds = new Set(subcats.map(s => s.id));
+    for (const id of validated) {
+      if (!subcatIds.has(id)) {
+        return res.status(400).json({ error: 'Una o más subcategorías no pertenecen a esta categoría' });
+      }
+    }
+
+    await categoriesRepo.reorderSubcategories(validated);
+    res.json({ message: 'Orden actualizado' });
+  } catch (err) {
+    console.error('PUT /admin/categories/:id/subcategories/reorder:', err);
+    res.status(500).json({ error: err.message || 'Error al reordenar subcategorías' });
   }
 });
 

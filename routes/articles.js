@@ -79,8 +79,8 @@ router.get('/', optionalAuth, async (req, res) => {
         return res.json({ articles: [], total: 0, page, pageSize });
       }
 
-      conditions.push('(a.category_id = ? OR (a.category_id IS NULL AND a.category = ?))');
-      params.push(selectedCategory.id, selectedCategory.name);
+      conditions.push('(a.category_id = ? OR (a.category_id IS NULL AND (a.category = ? OR a.category = ?)))');
+      params.push(selectedCategory.id, selectedCategory.name, selectedCategory.slug);
     } else if (categorySlug) {
       selectedCategory = await categoryRepo.getCategoryBySlug(categorySlug);
 
@@ -88,8 +88,8 @@ router.get('/', optionalAuth, async (req, res) => {
         return res.json({ articles: [], total: 0, page, pageSize });
       }
 
-      conditions.push('(a.category_id = ? OR (a.category_id IS NULL AND a.category = ?))');
-      params.push(selectedCategory.id, selectedCategory.name);
+      conditions.push('(a.category_id = ? OR (a.category_id IS NULL AND (a.category = ? OR a.category = ?)))');
+      params.push(selectedCategory.id, selectedCategory.name, selectedCategory.slug);
     }
 
     if (subcategoryId) {
@@ -103,8 +103,8 @@ router.get('/', optionalAuth, async (req, res) => {
         return res.json({ articles: [], total: 0, page, pageSize });
       }
 
-      conditions.push('(a.subcategory_id = ? OR (a.subcategory_id IS NULL AND a.subcategory = ?))');
-      params.push(selectedSubcategory.id, selectedSubcategory.name);
+      conditions.push('(a.subcategory_id = ? OR (a.subcategory_id IS NULL AND (a.subcategory = ? OR a.subcategory = ?)))');
+      params.push(selectedSubcategory.id, selectedSubcategory.name, selectedSubcategory.slug);
     } else if (subcategorySlug) {
       if (!selectedCategory) {
         return res.status(400).json({ error: 'No se puede filtrar por subcategoría sin categoría' });
@@ -116,8 +116,8 @@ router.get('/', optionalAuth, async (req, res) => {
         return res.json({ articles: [], total: 0, page, pageSize });
       }
 
-      conditions.push('(a.subcategory_id = ? OR (a.subcategory_id IS NULL AND a.subcategory = ?))');
-      params.push(selectedSubcategory.id, selectedSubcategory.name);
+      conditions.push('(a.subcategory_id = ? OR (a.subcategory_id IS NULL AND (a.subcategory = ? OR a.subcategory = ?)))');
+      params.push(selectedSubcategory.id, selectedSubcategory.name, selectedSubcategory.slug);
     }
 
     const where = 'WHERE ' + conditions.join(' AND ');
