@@ -145,6 +145,177 @@ async function getSubcategoryById(id) {
   return rows[0] || null;
 }
 
+function slugify(text) {
+  return text
+    .toString()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+async function getActiveCategoryById(id) {
+  const rows = await db.select({
+    id: categories.id,
+    slug: categories.slug,
+    name: categories.name,
+    description: categories.description,
+    sortOrder: categories.sortOrder,
+    isActive: categories.isActive,
+    color: categories.color,
+  })
+    .from(categories)
+    .where(and(
+      eq(categories.id, id),
+      eq(categories.isActive, '1')
+    ));
+
+  return rows[0] || null;
+}
+
+async function getActiveSubcategoryById(id) {
+  const rows = await db.select({
+    id: subcategories.id,
+    categoryId: subcategories.categoryId,
+    slug: subcategories.slug,
+    name: subcategories.name,
+    sortOrder: subcategories.sortOrder,
+    isActive: subcategories.isActive,
+  })
+    .from(subcategories)
+    .where(and(
+      eq(subcategories.id, id),
+      eq(subcategories.isActive, '1')
+    ));
+
+  return rows[0] || null;
+}
+
+async function findActiveCategoryByLegacyToken(token) {
+  const exactSlug = await db.select({
+    id: categories.id,
+    slug: categories.slug,
+    name: categories.name,
+    description: categories.description,
+    sortOrder: categories.sortOrder,
+    isActive: categories.isActive,
+    color: categories.color,
+  })
+    .from(categories)
+    .where(and(
+      eq(categories.slug, token),
+      eq(categories.isActive, '1')
+    ));
+
+  if (exactSlug[0]) return exactSlug[0];
+
+  const exactName = await db.select({
+    id: categories.id,
+    slug: categories.slug,
+    name: categories.name,
+    description: categories.description,
+    sortOrder: categories.sortOrder,
+    isActive: categories.isActive,
+    color: categories.color,
+  })
+    .from(categories)
+    .where(and(
+      eq(categories.name, token),
+      eq(categories.isActive, '1')
+    ));
+
+  if (exactName[0]) return exactName[0];
+
+  const normalizedSlug = slugify(token);
+  const byNormalizedSlug = await db.select({
+    id: categories.id,
+    slug: categories.slug,
+    name: categories.name,
+    description: categories.description,
+    sortOrder: categories.sortOrder,
+    isActive: categories.isActive,
+    color: categories.color,
+  })
+    .from(categories)
+    .where(and(
+      eq(categories.slug, normalizedSlug),
+      eq(categories.isActive, '1')
+    ));
+
+  return byNormalizedSlug[0] || null;
+}
+
+async function findActiveSubcategoriesByLegacyToken(token) {
+  const bySlug = await db.select({
+    id: subcategories.id,
+    categoryId: subcategories.categoryId,
+    slug: subcategories.slug,
+    name: subcategories.name,
+    sortOrder: subcategories.sortOrder,
+    isActive: subcategories.isActive,
+  })
+    .from(subcategories)
+    .where(and(
+      eq(subcategories.slug, token),
+      eq(subcategories.isActive, '1')
+    ));
+
+  if (bySlug.length) return bySlug;
+
+  const byName = await db.select({
+    id: subcategories.id,
+    categoryId: subcategories.categoryId,
+    slug: subcategories.slug,
+    name: subcategories.name,
+    sortOrder: subcategories.sortOrder,
+    isActive: subcategories.isActive,
+  })
+    .from(subcategories)
+    .where(and(
+      eq(subcategories.name, token),
+      eq(subcategories.isActive, '1')
+    ));
+
+  return byName;
+}
+
+async function findActiveSubcategoryByLegacyTokenWithinCategory(categoryId, token) {
+  const bySlug = await db.select({
+    id: subcategories.id,
+    categoryId: subcategories.categoryId,
+    slug: subcategories.slug,
+    name: subcategories.name,
+    sortOrder: subcategories.sortOrder,
+    isActive: subcategories.isActive,
+  })
+    .from(subcategories)
+    .where(and(
+      eq(subcategories.categoryId, categoryId),
+      eq(subcategories.slug, token),
+      eq(subcategories.isActive, '1')
+    ));
+
+  if (bySlug[0]) return bySlug[0];
+
+  const byName = await db.select({
+    id: subcategories.id,
+    categoryId: subcategories.categoryId,
+    slug: subcategories.slug,
+    name: subcategories.name,
+    sortOrder: subcategories.sortOrder,
+    isActive: subcategories.isActive,
+  })
+    .from(subcategories)
+    .where(and(
+      eq(subcategories.categoryId, categoryId),
+      eq(subcategories.name, token),
+      eq(subcategories.isActive, '1')
+    ));
+
+  return byName[0] || null;
+}
+
 async function createCategory(input) {
   const insertedIds = await db.insert(categories)
     .values({
@@ -268,4 +439,9 @@ module.exports = {
   getSubcategoryById,
   reorderCategories,
   reorderSubcategories,
+  getActiveCategoryById,
+  getActiveSubcategoryById,
+  findActiveCategoryByLegacyToken,
+  findActiveSubcategoriesByLegacyToken,
+  findActiveSubcategoryByLegacyTokenWithinCategory,
 };

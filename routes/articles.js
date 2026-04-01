@@ -12,6 +12,7 @@ const {
   sanitizeSlug, sanitizeStatus, sanitizeContent, sanitizeSummary
 } = require('../utils/sanitize');
 const categoryRepo = require('../src/repositories/categories');
+const { resolveArticleTaxonomyInput, resolveFilterTaxonomyInput } = require('../src/services/articleTaxonomy');
 
 const STORAGE = process.env.STORAGE_PATH || path.join(__dirname, '../storage');
 const BASE_URL = process.env.BASE_URL || '';
@@ -69,55 +70,39 @@ router.get('/', optionalAuth, async (req, res) => {
       params.push(searchQuery);
     }
 
-    let selectedCategory = null;
-    let selectedSubcategory = null;
+    const resolved = await resolveFilterTaxonomyInput({
+      categoryId, subcategoryId, categorySlug, subcategorySlug
+    });
 
-    if (categoryId) {
-      selectedCategory = await categoryRepo.getCategoryById(categoryId);
+    const { categoryId: resolvedCategoryId, subcategoryId: resolvedSubcategoryId,
+            categoryName, categorySlug: resolvedCategorySlug,
+            subcategoryName, subcategorySlug: resolvedSubcategorySlug } = resolved;
 
-      if (!selectedCategory || !selectedCategory.is_active) {
+    if (resolvedCategoryId) {
+      const [[cat]] = await db.query(
+        'SELECT id, name, slug FROM eu_categories WHERE id = ? AND is_active = 1',
+        [resolvedCategoryId]
+      );
+      if (!cat) {
         return res.json({ articles: [], total: 0, page, pageSize });
       }
-
       conditions.push('(a.category_id = ? OR (a.category_id IS NULL AND (a.category = ? OR a.category = ?)))');
-      params.push(selectedCategory.id, selectedCategory.name, selectedCategory.slug);
-    } else if (categorySlug) {
-      selectedCategory = await categoryRepo.getCategoryBySlug(categorySlug);
-
-      if (!selectedCategory || !selectedCategory.is_active) {
-        return res.json({ articles: [], total: 0, page, pageSize });
-      }
-
-      conditions.push('(a.category_id = ? OR (a.category_id IS NULL AND (a.category = ? OR a.category = ?)))');
-      params.push(selectedCategory.id, selectedCategory.name, selectedCategory.slug);
+      params.push(cat.id, cat.name, cat.slug);
     }
 
-    if (subcategoryId) {
-      if (!selectedCategory) {
-        return res.status(400).json({ error: 'No se puede filtrar por subcategoría sin categoría' });
-      }
-
-      selectedSubcategory = await categoryRepo.getSubcategoryById(subcategoryId);
-
-      if (!selectedSubcategory || !selectedSubcategory.is_active || selectedSubcategory.categoryId !== selectedCategory.id) {
+    if (resolvedSubcategoryId) {
+      const [[sub]] = await db.query(
+        'SELECT id, name, slug, category_id FROM eu_subcategories WHERE id = ? AND is_active = 1',
+        [resolvedSubcategoryId]
+      );
+      if (!sub) {
         return res.json({ articles: [], total: 0, page, pageSize });
       }
-
-      conditions.push('(a.subcategory_id = ? OR (a.subcategory_id IS NULL AND (a.subcategory = ? OR a.subcategory = ?)))');
-      params.push(selectedSubcategory.id, selectedSubcategory.name, selectedSubcategory.slug);
-    } else if (subcategorySlug) {
-      if (!selectedCategory) {
-        return res.status(400).json({ error: 'No se puede filtrar por subcategoría sin categoría' });
-      }
-
-      selectedSubcategory = await categoryRepo.getSubcategoryBySlug(selectedCategory.id, subcategorySlug);
-
-      if (!selectedSubcategory || !selectedSubcategory.is_active) {
+      if (resolvedCategoryId && sub.category_id !== resolvedCategoryId) {
         return res.json({ articles: [], total: 0, page, pageSize });
       }
-
       conditions.push('(a.subcategory_id = ? OR (a.subcategory_id IS NULL AND (a.subcategory = ? OR a.subcategory = ?)))');
-      params.push(selectedSubcategory.id, selectedSubcategory.name, selectedSubcategory.slug);
+      params.push(sub.id, sub.name, sub.slug);
     }
 
     const where = 'WHERE ' + conditions.join(' AND ');
@@ -403,38 +388,14 @@ router.post('/', requireAuth, requireVerified, checkRateLimit('submit_article'),
     if (!summary) return res.status(400).json({ error: 'El resumen es obligatorio' });
     if (!content) return res.status(400).json({ error: 'El contenido es obligatorio' });
 
-    let resolvedCategoryId = categoryId;
-    let resolvedSubcategoryId = subcategoryId;
-
-    if (categoryId && subcategoryId) {
-      const subcat = await categoryRepo.getSubcategoryById(subcategoryId);
-      if (!subcat || subcat.categoryId !== categoryId) {
-        return res.status(400).json({ error: 'La subcategoría no pertenece a la categoría especificada' });
-      }
-    } else if (categoryId && !subcategoryId) {
-      const cat = await categoryRepo.getCategoryById(categoryId);
-      if (!cat) {
-        return res.status(400).json({ error: 'Categoría no encontrada' });
-      }
-    } else if (!categoryId && category) {
-      const categorySlug = sanitizeSlug(category);
-      const subcategorySlug = sanitizeSlug(subcategory);
-
-      const dbCategory = categorySlug
-        ? await categoryRepo.getCategoryBySlug(categorySlug)
-        : null;
-
-      if (dbCategory) {
-        resolvedCategoryId = dbCategory.id;
-
-        if (subcategorySlug) {
-          const dbSubcat = await categoryRepo.getSubcategoryBySlug(dbCategory.id, subcategorySlug);
-          if (dbSubcat) {
-            resolvedSubcategoryId = dbSubcat.id;
-          }
-        }
-      }
+    let taxonomy;
+    try {
+      taxonomy = await resolveArticleTaxonomyInput({ categoryId, subcategoryId, category, subcategory });
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
     }
+
+    const { category: resolvedCategory, subcategory: resolvedSubcategory, categoryId: resolvedCategoryId, subcategoryId: resolvedSubcategoryId } = taxonomy;
 
     let slug = slugify(title);
     const [existing] = await db.query('SELECT id FROM eu_articles WHERE slug = ?', [slug]);
@@ -449,7 +410,7 @@ router.post('/', requireAuth, requireVerified, checkRateLimit('submit_article'),
       `INSERT INTO eu_articles (slug, title, summary, content_path, author_id, status, category, subcategory, category_id, subcategory_id, cover_image_id, tags)
        VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?)`,
       [slug, title, summary, contentPath, req.user.id,
-       category || null, subcategory || null, resolvedCategoryId || null, resolvedSubcategoryId || null, coverImageId || null, tags.length ? JSON.stringify(tags) : null]
+       resolvedCategory && resolvedCategory.name || null, resolvedSubcategory && resolvedSubcategory.name || null, resolvedCategoryId || null, resolvedSubcategoryId || null, coverImageId || null, tags.length ? JSON.stringify(tags) : null]
     );
 
     // Notify mods/admins
@@ -490,33 +451,14 @@ router.post('/:id/edit', requireAuth, requireVerified, checkRateLimit('edit_arti
 
     if (!content) return res.status(400).json({ error: 'El contenido de la edición es obligatorio' });
 
-    let resolvedCategoryId = categoryId;
-    let resolvedSubcategoryId = subcategoryId;
-
-    if (categoryId && subcategoryId) {
-      const subcat = await categoryRepo.getSubcategoryById(subcategoryId);
-      if (!subcat || subcat.categoryId !== categoryId) {
-        return res.status(400).json({ error: 'La subcategoría no pertenece a la categoría especificada' });
-      }
-    } else if (!categoryId && !subcategoryId && category) {
-      const categorySlug = sanitizeSlug(category);
-      const subcategorySlug = sanitizeSlug(subcategory);
-
-      const dbCategory = categorySlug
-        ? await categoryRepo.getCategoryBySlug(categorySlug)
-        : null;
-
-      if (dbCategory) {
-        resolvedCategoryId = dbCategory.id;
-
-        if (subcategorySlug) {
-          const dbSubcat = await categoryRepo.getSubcategoryBySlug(dbCategory.id, subcategorySlug);
-          if (dbSubcat) {
-            resolvedSubcategoryId = dbSubcat.id;
-          }
-        }
-      }
+    let taxonomy;
+    try {
+      taxonomy = await resolveArticleTaxonomyInput({ categoryId, subcategoryId, category, subcategory });
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
     }
+
+    const { category: resolvedCategory, subcategory: resolvedSubcategory, categoryId: resolvedCategoryId, subcategoryId: resolvedSubcategoryId } = taxonomy;
 
     const [artRows] = await db.query('SELECT * FROM eu_articles WHERE id = ?', [articleId]);
     if (!artRows.length) return res.status(404).json({ error: 'Artículo no encontrado' });
@@ -530,7 +472,7 @@ router.post('/:id/edit', requireAuth, requireVerified, checkRateLimit('edit_arti
       `INSERT INTO eu_article_edits
        (article_id, editor_id, title, summary, content_path, edit_note, category, subcategory, category_id, subcategory_id, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
-      [articleId, req.user.id, title || null, summary || null, editPath, editNote || null, category, subcategory, resolvedCategoryId, resolvedSubcategoryId]
+      [articleId, req.user.id, title || null, summary || null, editPath, editNote || null, resolvedCategory && resolvedCategory.name || null, resolvedSubcategory && resolvedSubcategory.name || null, resolvedCategoryId || null, resolvedSubcategoryId || null]
     );
 
     // Notify mods/admins

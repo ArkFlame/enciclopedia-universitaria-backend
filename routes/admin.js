@@ -183,7 +183,9 @@ router.put('/edits/:id/status', requireAuth, requireMod, async (req, res) => {
     if (!status) return res.status(400).json({ error: 'Estado inválido' });
 
     const [rows] = await db.query(
-      `SELECT ae.*, a.title AS article_title, a.content_path AS original_path
+      `SELECT ae.id, ae.article_id, ae.title, ae.summary, ae.content_path,
+              ae.category, ae.subcategory, ae.category_id, ae.subcategory_id,
+              ae.editor_id, ae.status, a.title AS article_title, a.content_path AS original_path
        FROM eu_article_edits ae
        JOIN eu_articles a ON ae.article_id = a.id
        WHERE ae.id = ?`,
@@ -206,8 +208,8 @@ router.put('/edits/:id/status', requireAuth, requireMod, async (req, res) => {
       const updates = {};
       if (edit.title)    updates.title    = edit.title;
       if (edit.summary)  updates.summary  = edit.summary;
-      if (edit.category)     updates.category      = edit.category;
-      if (edit.subcategory)  updates.subcategory   = edit.subcategory;
+      if ('category' in edit)     updates.category      = edit.category;
+      if ('subcategory' in edit)  updates.subcategory   = edit.subcategory;
       if ('category_id' in edit)     updates.category_id     = edit.category_id;
       if ('subcategory_id' in edit)  updates.subcategory_id  = edit.subcategory_id;
 
