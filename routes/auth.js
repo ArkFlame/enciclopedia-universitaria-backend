@@ -148,6 +148,12 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Credenciales incorrectas' });
 
     const user = rows[0];
+    if (!user.password_hash) {
+      return res.status(401).json({
+        error: 'Esta cuenta está vinculada a Google. Usa "Continuar con Google".',
+        code: 'GOOGLE_ONLY_ACCOUNT'
+      });
+    }
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid)
       return res.status(401).json({ error: 'Credenciales incorrectas' });
@@ -508,57 +514,72 @@ router.post('/google', async (req, res) => {
       return res.status(400).json({ error: 'Google no proporcionó un correo electrónico', code: 'NO_EMAIL' });
     }
 
-    // ── 2. Find existing user by google_id OR email ───────────────
-    const [existingRows] = await db.query(
-      `SELECT id, username, email, role, google_id, monthly_expires_at,
-              articles_read_this_month, notification_count, email_verified
-       FROM eu_users WHERE google_id = ? OR email = ?`,
-      [googleId, googleEmail]
-    );
-
+    // ── 2. Deterministic user lookup / linking / creation ──────────
     let user;
 
-    if (existingRows.length) {
-      user = existingRows[0];
+    const [byGoogleId] = await db.query(
+      `SELECT id, username, email, role, google_id, monthly_expires_at,
+              articles_read_this_month, notification_count, email_verified
+       FROM eu_users WHERE google_id = ?`,
+      [googleId]
+    );
 
-      // If found by email but google_id not yet linked, link it now
-      if (!user.google_id) {
-        await db.query(
-          'UPDATE eu_users SET google_id = ?, email_verified = 1 WHERE id = ?',
-          [googleId, user.id]
-        );
-        user.google_id      = googleId;
-        user.email_verified = 1;
-      }
-
-      // Handle expired MONTHLY subscription
-      if (user.role === 'MONTHLY' && user.monthly_expires_at && new Date(user.monthly_expires_at) < new Date()) {
-        await db.query('UPDATE eu_users SET role = ? WHERE id = ?', ['FREE', user.id]);
-        user.role = 'FREE';
-      }
-
+    if (byGoogleId.length) {
+      user = byGoogleId[0];
     } else {
-      // ── 3. Create a new user ────────────────────────────────────
-      const username = await deriveUsername(googleName, googleEmail);
-
-      const [result] = await db.query(
-        `INSERT INTO eu_users
-           (username, email, google_id, password_hash, role, email_verified)
-         VALUES (?, ?, ?, NULL, 'FREE', 1)`,
-        [username, googleEmail, googleId]
+      const [byEmail] = await db.query(
+        `SELECT id, username, email, role, google_id, monthly_expires_at,
+                articles_read_this_month, notification_count, email_verified
+         FROM eu_users WHERE email = ?`,
+        [googleEmail]
       );
 
-      user = {
-        id:                      result.insertId,
-        username,
-        email:                   googleEmail,
-        role:                    'FREE',
-        google_id:               googleId,
-        email_verified:          1,
-        articles_read_this_month: 0,
-        notification_count:      0,
-        monthly_expires_at:      null
-      };
+      if (byEmail.length) {
+        user = byEmail[0];
+
+        if (user.google_id && user.google_id !== googleId) {
+          return res.status(409).json({
+            error: 'Este correo ya está vinculado a otra cuenta de Google.',
+            code: 'GOOGLE_ACCOUNT_CONFLICT'
+          });
+        }
+
+        if (!user.google_id) {
+          await db.query(
+            'UPDATE eu_users SET google_id = ?, email_verified = 1 WHERE id = ?',
+            [googleId, user.id]
+          );
+          user.google_id = googleId;
+          user.email_verified = 1;
+        }
+      } else {
+        const username = await deriveUsername(googleName, googleEmail);
+
+        const [result] = await db.query(
+          `INSERT INTO eu_users
+             (username, email, google_id, password_hash, role, email_verified)
+           VALUES (?, ?, ?, NULL, 'FREE', 1)`,
+          [username, googleEmail, googleId]
+        );
+
+        user = {
+          id:                      result.insertId,
+          username,
+          email:                   googleEmail,
+          role:                    'FREE',
+          google_id:               googleId,
+          email_verified:          1,
+          articles_read_this_month: 0,
+          notification_count:      0,
+          monthly_expires_at:      null
+        };
+      }
+    }
+
+    // Handle expired MONTHLY subscription
+    if (user.role === 'MONTHLY' && user.monthly_expires_at && new Date(user.monthly_expires_at) < new Date()) {
+      await db.query('UPDATE eu_users SET role = ? WHERE id = ?', ['FREE', user.id]);
+      user.role = 'FREE';
     }
 
     // ── 4. Issue JWT ────────────────────────────────────────────────
