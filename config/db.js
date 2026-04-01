@@ -1,10 +1,7 @@
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
-const runtimeDatabase =
-  process.env.DRIZZLE_DB_NAME ||
-  process.env.DB_NAME ||
-  'enciclopediadb_drizzle';
+const runtimeDatabase = process.env.DRIZZLE_DB_NAME || 'enciclopediadb_drizzle';
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
@@ -21,14 +18,6 @@ const pool = mysql.createPool({
   multipleStatements: true,
 });
 
-pool.getConnection()
-  .then((conn) => {
-    console.log(`✅ Conexión a MySQL establecida (${runtimeDatabase})`);
-    conn.release();
-  })
-  .catch((err) => {
-    console.error('❌ Error conectando a MySQL:', err.message);
-    process.exit(1);
-  });
+pool.runtimeDatabase = runtimeDatabase;
 
 module.exports = pool;

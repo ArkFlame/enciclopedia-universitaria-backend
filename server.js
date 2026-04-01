@@ -194,35 +194,39 @@ cron.schedule('5 0 1 * *', async () => {
 
 // ─── BOOTSTRAP COORDINATOR ─────────────────────────────────────────
 async function runBootstrap() {
-  try {
-    const state = await getBootstrapState();
+  const state = await getBootstrapState();
 
-    if (state.bootstrapRequired) {
-      console.log(
-        `[BOOTSTRAP] Legacy DB "${state.legacyDbName}" detected and Drizzle DB "${state.drizzleDbName}" is empty. Starting one-time import...`
-      );
+  if (state.bootstrapRequired) {
+    console.log(
+      `[BOOTSTRAP] Legacy DB "${state.legacyDbName}" detected and Drizzle DB "${state.drizzleDbName}" is empty. Starting one-time import...`
+    );
 
-      const result = await importLegacyData();
-      console.log('[BOOTSTRAP] One-time import completed:', result);
-      return;
-    }
-
-    if (state.legacyExists) {
-      console.log('[BOOTSTRAP] Drizzle DB already has data. Skipping legacy import.');
-      return;
-    }
-
-    console.log('[BOOTSTRAP] Legacy DB not found. Running with Drizzle DB only.');
-  } catch (error) {
-    console.error('[BOOTSTRAP] Fatal bootstrap error:', error.message);
-    process.exit(1);
+    const result = await importLegacyData();
+    console.log('[BOOTSTRAP] One-time import completed:', result);
+  } else if (state.legacyExists) {
+    console.log(
+      `[BOOTSTRAP] Legacy DB "${state.legacyDbName}" available but Drizzle DB already has data. Skipping legacy import.`
+    );
+  } else if (state.drizzleDataEmpty) {
+    console.log('[BOOTSTRAP] Legacy DB not found, Drizzle DB reseeded with defaults.');
+  } else {
+    console.log('[BOOTSTRAP] Running with Drizzle DB only.');
   }
+
+  console.log(`[BOOTSTRAP] Drizzle database ready: "${state.drizzleDbName}"`);
+
+  return state;
 }
 
 // ─── INICIO ──────────────────────────────────────────────────────
-runBootstrap().then(() => {
-  app.listen(PORT, () => {
-    console.log(`
+(async () => {
+  try {
+    const state = await runBootstrap();
+    await db.query('SELECT 1');
+    console.log(`[DB] Connection pool ready for Drizzle database "${db.runtimeDatabase}"`);
+
+    app.listen(PORT, () => {
+      console.log(`
   ╔══════════════════════════════════════════════════╗
   ║      ENCICLOPEDIA UNIVERSITARIA - BACKEND        ║
   ║                                                  ║
@@ -230,6 +234,11 @@ runBootstrap().then(() => {
   ║  📊 MySQL: ${process.env.DB_HOST}:${process.env.DB_NAME}              ║
   ║  🌍 Frontend: ${process.env.FRONTEND_URL || 'no configurado'}
   ╚══════════════════════════════════════════════════╝
-  `);
-  });
-});
+      `);
+      console.log(`[BOOTSTRAP] Runtime Drizzle database: "${state.drizzleDbName}"`);
+    });
+  } catch (error) {
+    console.error('[STARTUP] Fatal error during bootstrap:', error);
+    process.exit(1);
+  }
+})();
