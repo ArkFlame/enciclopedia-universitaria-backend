@@ -31,18 +31,22 @@ async function ensureDir(dir) {
 // ── GET /api/articles — List articles ──────────────────────────────────
 router.get('/', optionalAuth, async (req, res) => {
   try {
-    const rawQuery    = req.query.query    || req.query.q || '';
-    const rawCategory = req.query.category || '';
-    const rawPage     = req.query.page;
-    const rawLimit    = req.query.limit;
+    const rawQuery      = req.query.query      || req.query.q || '';
+    const rawCategory   = req.query.category   || '';
+    const rawSubcategory = req.query.subcategory || '';
+    const rawPage       = req.query.page;
+    const rawLimit      = req.query.limit;
+    const rawSort       = req.query.sort || 'recent';
     const includePending = req.query.includePending === 'true';
 
     // Sanitize all inputs
-    const searchQuery = sanitizeSearchQuery(rawQuery);
-    const category    = sanitizeString(rawCategory, 100);
-    const page        = sanitizeInt(rawPage, 1, 9999, 1);
-    const pageSize    = sanitizeInt(rawLimit, 1, 50, 20);
-    const offset      = (page - 1) * pageSize;
+    const searchQuery   = sanitizeSearchQuery(rawQuery);
+    const category      = sanitizeString(rawCategory, 100);
+    const subcategory   = sanitizeString(rawSubcategory, 100);
+    const page          = sanitizeInt(rawPage, 1, 9999, 1);
+    const pageSize      = sanitizeInt(rawLimit, 1, 50, 20);
+    const offset        = (page - 1) * pageSize;
+    const sort          = rawSort === 'popular' ? 'views' : 'created_at';
 
     const conditions = [];
     const params     = [];
@@ -65,17 +69,22 @@ router.get('/', optionalAuth, async (req, res) => {
       params.push(category);
     }
 
+    if (subcategory) {
+      conditions.push('a.subcategory = ?');
+      params.push(subcategory);
+    }
+
     const where = 'WHERE ' + conditions.join(' AND ');
 
     const [rows] = await db.query(
-      `SELECT a.id, a.slug, a.title, a.summary, a.status, a.category, a.tags,
+      `SELECT a.id, a.slug, a.title, a.summary, a.status, a.category, a.subcategory, a.cover_image_id, a.tags,
               a.views, a.created_at, a.updated_at,
               u.username AS author_username,
               (SELECT COUNT(*) FROM eu_media m WHERE m.article_id = a.id) AS image_count
        FROM eu_articles a
        JOIN eu_users u ON a.author_id = u.id
        ${where}
-       ORDER BY a.created_at DESC
+       ORDER BY a.${sort} DESC
        LIMIT ? OFFSET ?`,
       [...params, pageSize, offset]
     );
@@ -141,7 +150,7 @@ router.get('/:slug', optionalAuth, async (req, res) => {
 
     const [rows] = await db.query(
       `SELECT a.id, a.slug, a.title, a.summary, a.content_path, a.status,
-              a.category, a.tags, a.views, a.version, a.created_at, a.updated_at,
+              a.category, a.subcategory, a.cover_image_id, a.tags, a.views, a.version, a.created_at, a.updated_at,
               a.rejection_reason,
               u.username AS author_username, u.id AS author_id,
               ru.username AS reviewer_username, a.reviewed_at
@@ -195,6 +204,15 @@ router.get('/:slug', optionalAuth, async (req, res) => {
       [article.id]
     );
 
+    let coverImage = null;
+    if (article.cover_image_id) {
+      const [coverRows] = await db.query(
+        'SELECT id, filename, public_url FROM eu_media WHERE id = ?',
+        [article.cover_image_id]
+      );
+      if (coverRows.length) coverImage = coverRows[0];
+    }
+
     const [sources] = await db.query(
       `SELECT id, type, title, url, pdf_original_name, pdf_size, favicon_url 
        FROM eu_article_sources WHERE article_id = ? ORDER BY display_order ASC, created_at ASC`,
@@ -214,6 +232,7 @@ router.get('/:slug', optionalAuth, async (req, res) => {
 
     res.json({
       ...article,
+      coverImage,
       summaryHtml,
       htmlContent: limitReached ? null : htmlContent,
       limitReached,
@@ -228,20 +247,45 @@ router.get('/:slug', optionalAuth, async (req, res) => {
   }
 });
 
+// ── Subcategory validation rules ────────────────────────────────────────
+const SUBCATEGORY_RULES = {
+  'irp': ['Física', 'Matemáticas', 'Programación'],
+  'ieu': ['Lenguaje', 'Comunicación', 'Literatura', 'Prácticas de estudio universitario'],
+  'icyt': ['Química', 'Biología', 'Bioquímica', 'Temas relacionados']
+};
+
+function isValidSubcategory(category, subcategory) {
+  if (!subcategory) return true;
+  const categoryKey = category ? category.toLowerCase() : null;
+  const allowed = categoryKey ? SUBCATEGORY_RULES[categoryKey] : null;
+  if (!allowed) return true;
+  return allowed.includes(subcategory);
+}
+
 // ── POST /api/articles — Create article ────────────────────────────────
 router.post('/', requireAuth, requireVerified, checkRateLimit('submit_article'), async (req, res) => {
   try {
-    const title    = sanitizeString(req.body.title,   500);
-    const summary  = sanitizeSummary(req.body.summary, 2000);
-    const content  = sanitizeContent(req.body.content);
-    const category = sanitizeString(req.body.category, 100);
-    const tags     = Array.isArray(req.body.tags)
+    const title        = sanitizeString(req.body.title,   500);
+    const summary      = sanitizeSummary(req.body.summary, 2000);
+    const content      = sanitizeContent(req.body.content);
+    const category     = sanitizeString(req.body.category, 100);
+    const subcategory  = sanitizeString(req.body.subcategory, 100);
+    const coverImageId = sanitizeInt(req.body.coverImageId, 1, 999999999);
+    const tags         = Array.isArray(req.body.tags)
       ? req.body.tags.map(t => sanitizeString(t, 50)).filter(Boolean).slice(0, 20)
       : [];
 
     if (!title)   return res.status(400).json({ error: 'El título es obligatorio' });
     if (!summary) return res.status(400).json({ error: 'El resumen es obligatorio' });
     if (!content) return res.status(400).json({ error: 'El contenido es obligatorio' });
+
+    const categoryLower = category ? category.toLowerCase() : null;
+    if (!isValidSubcategory(category, subcategory)) {
+      const allowed = categoryLower ? SUBCATEGORY_RULES[categoryLower] : null;
+      return res.status(400).json({
+        error: `Subcategoría inválida para la categoría "${category}". Las subcategorías permitidas son: ${allowed ? allowed.join(', ') : ''}`
+      });
+    }
 
     let slug = slugify(title);
     const [existing] = await db.query('SELECT id FROM eu_articles WHERE slug = ?', [slug]);
@@ -253,10 +297,10 @@ router.post('/', requireAuth, requireVerified, checkRateLimit('submit_article'),
     await fs.writeFile(contentPath, content, 'utf8');
 
     const [result] = await db.query(
-      `INSERT INTO eu_articles (slug, title, summary, content_path, author_id, status, category, tags)
-       VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
+      `INSERT INTO eu_articles (slug, title, summary, content_path, author_id, status, category, subcategory, cover_image_id, tags)
+       VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)`,
       [slug, title, summary, contentPath, req.user.id,
-       category || null, tags.length ? JSON.stringify(tags) : null]
+       category || null, subcategory || null, coverImageId || null, tags.length ? JSON.stringify(tags) : null]
     );
 
     // Notify mods/admins
@@ -283,15 +327,25 @@ router.post('/:id/edit', requireAuth, requireVerified, checkRateLimit('edit_arti
     const articleId = sanitizeInt(req.params.id, 1, 999999999);
     if (!articleId) return res.status(400).json({ error: 'ID inválido' });
 
-    const title    = sanitizeString(req.body.title,   500);
-    const summary  = typeof req.body.summary === 'string'
+    const title        = sanitizeString(req.body.title,   500);
+    const summary      = typeof req.body.summary === 'string'
       ? sanitizeSummary(req.body.summary, 2000)
       : '';
-    const content  = sanitizeContent(req.body.content);
-    const editNote = sanitizeString(req.body.editNote, 1000);
-    const category = sanitizeString(req.body.category, 100) || null;
+    const content      = sanitizeContent(req.body.content);
+    const editNote     = sanitizeString(req.body.editNote, 1000);
+    const category     = sanitizeString(req.body.category, 100) || null;
+    const subcategory  = sanitizeString(req.body.subcategory, 100) || null;
+    const coverImageId = sanitizeInt(req.body.coverImageId, 1, 999999999) || null;
 
     if (!content) return res.status(400).json({ error: 'El contenido de la edición es obligatorio' });
+
+    const categoryLower = category ? category.toLowerCase() : null;
+    if (!isValidSubcategory(category, subcategory)) {
+      const allowed = categoryLower ? SUBCATEGORY_RULES[categoryLower] : null;
+      return res.status(400).json({
+        error: `Subcategoría inválida para la categoría "${category}". Las subcategorías permitidas son: ${allowed ? allowed.join(', ') : ''}`
+      });
+    }
 
     const [artRows] = await db.query('SELECT * FROM eu_articles WHERE id = ?', [articleId]);
     if (!artRows.length) return res.status(404).json({ error: 'Artículo no encontrado' });
@@ -303,9 +357,9 @@ router.post('/:id/edit', requireAuth, requireVerified, checkRateLimit('edit_arti
 
     const [result] = await db.query(
       `INSERT INTO eu_article_edits
-       (article_id, editor_id, title, summary, content_path, edit_note, category, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
-      [articleId, req.user.id, title || null, summary || null, editPath, editNote || null, category]
+       (article_id, editor_id, title, summary, content_path, edit_note, category, subcategory, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+      [articleId, req.user.id, title || null, summary || null, editPath, editNote || null, category, subcategory]
     );
 
     // Notify mods/admins

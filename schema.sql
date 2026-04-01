@@ -211,7 +211,10 @@ INSERT IGNORE INTO eu_categories (name, slug, color) VALUES
   ('Biologia',           'biologia',           '#15803d'),
   ('Filosofia',          'filosofia',          '#6b21a8'),
   ('Arte y Cultura',     'arte-cultura',       '#c2410c'),
-  ('Sociologia',         'sociologia',         '#0369a1');
+  ('Sociologia',         'sociologia',         '#0369a1'),
+  ('Ing. en Sistemas',   'irp',                '#ea580c'),
+  ('Ing. Electronica',   'ieu',                '#0d9488'),
+  ('Ing. Quimica',       'icyt',               '#7c2d12');
 
 -- ---------------------------------------------------------------
 -- Verificacion final
