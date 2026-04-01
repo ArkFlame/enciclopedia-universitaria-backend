@@ -11,6 +11,7 @@ const {
   sanitizeSearchQuery, sanitizeString, sanitizeInt,
   sanitizeSlug, sanitizeStatus, sanitizeContent, sanitizeSummary
 } = require('../utils/sanitize');
+const categoryRepo = require('../repositories/categories');
 
 const STORAGE = process.env.STORAGE_PATH || path.join(__dirname, '../storage');
 const BASE_URL = process.env.BASE_URL || '';
@@ -109,6 +110,17 @@ router.get('/meta/categories', async (req, res) => {
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: 'Error al obtener categorías' });
+  }
+});
+
+// ── GET /api/articles/meta/categories/tree ────────────────────────────────
+router.get('/meta/categories/tree', async (req, res) => {
+  try {
+    const tree = await categoryRepo.listCategoriesTree();
+    res.json(tree);
+  } catch (err) {
+    console.error('GET /api/articles/meta/categories/tree error:', err);
+    res.status(500).json({ error: 'Error al obtener árbol de categorías' });
   }
 });
 
@@ -248,18 +260,11 @@ router.get('/:slug', optionalAuth, async (req, res) => {
 });
 
 // ── Subcategory validation rules ────────────────────────────────────────
-const SUBCATEGORY_RULES = {
-  'irp': ['Física', 'Matemáticas', 'Programación'],
-  'ieu': ['Lenguaje', 'Comunicación', 'Literatura', 'Prácticas de estudio universitario'],
-  'icyt': ['Química', 'Biología', 'Bioquímica', 'Temas relacionados']
-};
+// Removed: subcategory validation now relies on database foreign keys
+// The frontend category-selector ensures valid selections from DB
 
 function isValidSubcategory(category, subcategory) {
-  if (!subcategory) return true;
-  const categoryKey = category ? category.toLowerCase() : null;
-  const allowed = categoryKey ? SUBCATEGORY_RULES[categoryKey] : null;
-  if (!allowed) return true;
-  return allowed.includes(subcategory);
+  return true;
 }
 
 // ── POST /api/articles — Create article ────────────────────────────────
@@ -270,6 +275,8 @@ router.post('/', requireAuth, requireVerified, checkRateLimit('submit_article'),
     const content      = sanitizeContent(req.body.content);
     const category     = sanitizeString(req.body.category, 100);
     const subcategory  = sanitizeString(req.body.subcategory, 100);
+    const categoryId   = sanitizeInt(req.body.categoryId, 1, 999999999);
+    const subcategoryId = sanitizeInt(req.body.subcategoryId, 1, 999999999);
     const coverImageId = sanitizeInt(req.body.coverImageId, 1, 999999999);
     const tags         = Array.isArray(req.body.tags)
       ? req.body.tags.map(t => sanitizeString(t, 50)).filter(Boolean).slice(0, 20)
@@ -279,12 +286,37 @@ router.post('/', requireAuth, requireVerified, checkRateLimit('submit_article'),
     if (!summary) return res.status(400).json({ error: 'El resumen es obligatorio' });
     if (!content) return res.status(400).json({ error: 'El contenido es obligatorio' });
 
-    const categoryLower = category ? category.toLowerCase() : null;
-    if (!isValidSubcategory(category, subcategory)) {
-      const allowed = categoryLower ? SUBCATEGORY_RULES[categoryLower] : null;
-      return res.status(400).json({
-        error: `Subcategoría inválida para la categoría "${category}". Las subcategorías permitidas son: ${allowed ? allowed.join(', ') : ''}`
-      });
+    let resolvedCategoryId = categoryId;
+    let resolvedSubcategoryId = subcategoryId;
+
+    if (categoryId && subcategoryId) {
+      const subcat = await categoryRepo.getSubcategoryById(subcategoryId);
+      if (!subcat || subcat.categoryId !== categoryId) {
+        return res.status(400).json({ error: 'La subcategoría no pertenece a la categoría especificada' });
+      }
+    } else if (categoryId && !subcategoryId) {
+      const cat = await categoryRepo.getCategoryById(categoryId);
+      if (!cat) {
+        return res.status(400).json({ error: 'Categoría no encontrada' });
+      }
+    } else if (!categoryId && category) {
+      const categoryLower = category.toLowerCase();
+      const dbCategory = await categoryRepo.getCategoryBySlug(categoryLower);
+      if (dbCategory) {
+        resolvedCategoryId = dbCategory.id;
+        if (subcategory) {
+          const dbSubcat = await categoryRepo.getSubcategoryBySlug(resolvedCategoryId, subcategory.toLowerCase());
+          if (dbSubcat) {
+            resolvedSubcategoryId = dbSubcat.id;
+          }
+        }
+      }
+      if (!isValidSubcategory(category, subcategory)) {
+        const allowed = categoryLower ? SUBCATEGORY_RULES[categoryLower] : null;
+        return res.status(400).json({
+          error: `Subcategoría inválida para la categoría "${category}". Las subcategorías permitidas son: ${allowed ? allowed.join(', ') : ''}`
+        });
+      }
     }
 
     let slug = slugify(title);
@@ -297,10 +329,10 @@ router.post('/', requireAuth, requireVerified, checkRateLimit('submit_article'),
     await fs.writeFile(contentPath, content, 'utf8');
 
     const [result] = await db.query(
-      `INSERT INTO eu_articles (slug, title, summary, content_path, author_id, status, category, subcategory, cover_image_id, tags)
-       VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)`,
+      `INSERT INTO eu_articles (slug, title, summary, content_path, author_id, status, category, subcategory, category_id, subcategory_id, cover_image_id, tags)
+       VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?)`,
       [slug, title, summary, contentPath, req.user.id,
-       category || null, subcategory || null, coverImageId || null, tags.length ? JSON.stringify(tags) : null]
+       category || null, subcategory || null, resolvedCategoryId || null, resolvedSubcategoryId || null, coverImageId || null, tags.length ? JSON.stringify(tags) : null]
     );
 
     // Notify mods/admins
@@ -335,16 +367,38 @@ router.post('/:id/edit', requireAuth, requireVerified, checkRateLimit('edit_arti
     const editNote     = sanitizeString(req.body.editNote, 1000);
     const category     = sanitizeString(req.body.category, 100) || null;
     const subcategory  = sanitizeString(req.body.subcategory, 100) || null;
+    const categoryId   = sanitizeInt(req.body.categoryId, 1, 999999999) || null;
+    const subcategoryId = sanitizeInt(req.body.subcategoryId, 1, 999999999) || null;
     const coverImageId = sanitizeInt(req.body.coverImageId, 1, 999999999) || null;
 
     if (!content) return res.status(400).json({ error: 'El contenido de la edición es obligatorio' });
 
-    const categoryLower = category ? category.toLowerCase() : null;
-    if (!isValidSubcategory(category, subcategory)) {
-      const allowed = categoryLower ? SUBCATEGORY_RULES[categoryLower] : null;
-      return res.status(400).json({
-        error: `Subcategoría inválida para la categoría "${category}". Las subcategorías permitidas son: ${allowed ? allowed.join(', ') : ''}`
-      });
+    let resolvedCategoryId = categoryId;
+    let resolvedSubcategoryId = subcategoryId;
+
+    if (categoryId && subcategoryId) {
+      const subcat = await categoryRepo.getSubcategoryById(subcategoryId);
+      if (!subcat || subcat.categoryId !== categoryId) {
+        return res.status(400).json({ error: 'La subcategoría no pertenece a la categoría especificada' });
+      }
+    } else if (!categoryId && category) {
+      const categoryLower = category.toLowerCase();
+      const dbCategory = await categoryRepo.getCategoryBySlug(categoryLower);
+      if (dbCategory) {
+        resolvedCategoryId = dbCategory.id;
+        if (subcategory) {
+          const dbSubcat = await categoryRepo.getSubcategoryBySlug(resolvedCategoryId, subcategory.toLowerCase());
+          if (dbSubcat) {
+            resolvedSubcategoryId = dbSubcat.id;
+          }
+        }
+      }
+      if (!isValidSubcategory(category, subcategory)) {
+        const allowed = categoryLower ? SUBCATEGORY_RULES[categoryLower] : null;
+        return res.status(400).json({
+          error: `Subcategoría inválida para la categoría "${category}". Las subcategorías permitidas son: ${allowed ? allowed.join(', ') : ''}`
+        });
+      }
     }
 
     const [artRows] = await db.query('SELECT * FROM eu_articles WHERE id = ?', [articleId]);
@@ -357,9 +411,9 @@ router.post('/:id/edit', requireAuth, requireVerified, checkRateLimit('edit_arti
 
     const [result] = await db.query(
       `INSERT INTO eu_article_edits
-       (article_id, editor_id, title, summary, content_path, edit_note, category, subcategory, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
-      [articleId, req.user.id, title || null, summary || null, editPath, editNote || null, category, subcategory]
+       (article_id, editor_id, title, summary, content_path, edit_note, category, subcategory, category_id, subcategory_id, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+      [articleId, req.user.id, title || null, summary || null, editPath, editNote || null, category, subcategory, resolvedCategoryId, resolvedSubcategoryId]
     );
 
     // Notify mods/admins

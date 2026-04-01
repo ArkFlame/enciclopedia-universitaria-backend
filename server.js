@@ -9,6 +9,8 @@ const path = require('path');
 const db = require('./config/db');
 const { cleanOldLogs } = require('./middleware/rateLimit');
 const { authLimiter, loginLimiter, tokenSanityCheck } = require('./middleware/securityLimiter');
+const { isBootstrapRequired } = require('./src/db/bootstrap');
+const { importLegacyData } = require('./src/db/legacyImporter');
 
 const app = express();
 const PORT = process.env.PORT || 3594;
@@ -96,6 +98,7 @@ app.use('/api/articles', articlesRouter);
 app.use('/api/articles', sourcesRoutes.router);
 app.get('/api/sources/pdf/:sourceId', sourcesRoutes.downloadPdf);
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/admin', require('./routes/admin-categories'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/media',   require('./routes/media'));
 app.use('/api/profile', require('./routes/profile'));
@@ -189,9 +192,26 @@ cron.schedule('5 0 1 * *', async () => {
   }
 });
 
+// ─── BOOTSTRAP COORDINATOR ─────────────────────────────────────────
+async function runBootstrap() {
+  try {
+    const needsBootstrap = await isBootstrapRequired();
+    if (needsBootstrap) {
+      console.log('[BOOTSTRAP] Drizzle DB empty, starting legacy data import...');
+      const result = await importLegacyData();
+      console.log('[BOOTSTRAP] Import completed:', result);
+    } else {
+      console.log('[BOOTSTRAP] Drizzle DB already initialized, skipping import');
+    }
+  } catch (error) {
+    console.error('[BOOTSTRAP] Error during bootstrap:', error.message);
+  }
+}
+
 // ─── INICIO ──────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`
+runBootstrap().then(() => {
+  app.listen(PORT, () => {
+    console.log(`
   ╔══════════════════════════════════════════════════╗
   ║      ENCICLOPEDIA UNIVERSITARIA - BACKEND        ║
   ║                                                  ║
@@ -200,6 +220,5 @@ app.listen(PORT, () => {
   ║  🌍 Frontend: ${process.env.FRONTEND_URL || 'no configurado'}
   ╚══════════════════════════════════════════════════╝
   `);
+  });
 });
-
-module.exports = app;
