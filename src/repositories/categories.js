@@ -145,6 +145,25 @@ async function getSubcategoryById(id) {
   return rows[0] || null;
 }
 
+async function getSubcategoryByAnySlug(slug) {
+  const rows = await db.select({
+    id: subcategories.id,
+    categoryId: subcategories.categoryId,
+    slug: subcategories.slug,
+    name: subcategories.name,
+    sortOrder: subcategories.sortOrder,
+    isActive: subcategories.isActive,
+  })
+    .from(subcategories)
+    .where(and(
+      eq(subcategories.slug, slug),
+      eq(subcategories.isActive, '1')
+    ))
+    .orderBy(asc(subcategories.sortOrder));
+
+  return rows[0] || null;
+}
+
 function slugify(text) {
   return text
     .toString()
@@ -444,4 +463,5 @@ module.exports = {
   findActiveCategoryByLegacyToken,
   findActiveSubcategoriesByLegacyToken,
   findActiveSubcategoryByLegacyTokenWithinCategory,
+  getSubcategoryByAnySlug,
 };

@@ -98,9 +98,6 @@ router.get('/', optionalAuth, async (req, res) => {
       if (!sub) {
         return res.json({ articles: [], total: 0, page, pageSize });
       }
-      if (resolvedCategoryId && sub.category_id !== resolvedCategoryId) {
-        return res.json({ articles: [], total: 0, page, pageSize });
-      }
       conditions.push('(a.subcategory_id = ? OR (a.subcategory_id IS NULL AND (a.subcategory = ? OR a.subcategory = ?)))');
       params.push(sub.id, sub.name, sub.slug);
     }
