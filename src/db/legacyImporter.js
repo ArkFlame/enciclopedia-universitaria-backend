@@ -139,7 +139,6 @@ async function importLegacyData() {
 
     await drizzlePool.query('SET FOREIGN_KEY_CHECKS = 0');
 
-    // Remove seeded taxonomy only. Do not touch legacy DB.
     await drizzlePool.query('DELETE FROM eu_subcategories');
     await drizzlePool.query('DELETE FROM eu_categories');
 
@@ -162,7 +161,7 @@ async function importLegacyData() {
     try {
       await drizzlePool.query('SET FOREIGN_KEY_CHECKS = 1');
     } catch (_) {
-      // ignore restore failure, original error is more important
+      // ignore restore failure
     }
     console.error('[LegacyImporter] Error during import:', error.message);
     throw error;

@@ -231,7 +231,7 @@ async function runBootstrap() {
   ║      ENCICLOPEDIA UNIVERSITARIA - BACKEND        ║
   ║                                                  ║
   ║  🚀 Servidor: http://localhost:${PORT}            ║
-  ║  📊 MySQL: ${process.env.DB_HOST}:${process.env.DB_NAME}              ║
+  ║  📊 MySQL: ${process.env.DB_HOST}:${db.runtimeDatabase}              ║
   ║  🌍 Frontend: ${process.env.FRONTEND_URL || 'no configurado'}
   ╚══════════════════════════════════════════════════╝
       `);
