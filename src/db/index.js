@@ -16,6 +16,6 @@ const pool = mysql.createPool({
   keepAliveInitialDelay: 0,
 });
 
-const db = drizzle(pool);
+const db = drizzle({ client: pool });
 
 module.exports = { db, default: db };

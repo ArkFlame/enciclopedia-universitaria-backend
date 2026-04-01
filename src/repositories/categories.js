@@ -2,6 +2,10 @@ const { eq, asc, and } = require('drizzle-orm');
 const { db } = require('../db/index');
 const { categories, subcategories } = require('../db/schema');
 
+function toDbFlag(value) {
+  return value === true || value === '1' ? '1' : '0';
+}
+
 async function listCategoriesTree() {
   const allCategories = await db.select({
     id: categories.id,
@@ -13,7 +17,7 @@ async function listCategoriesTree() {
   })
     .from(categories)
     .where(eq(categories.isActive, '1'))
-    .orderBy(asc(categories.sortOrder));
+    .orderBy(asc(categories.sortOrder), asc(categories.name));
 
   const allSubcategories = await db.select({
     id: subcategories.id,
@@ -25,13 +29,13 @@ async function listCategoriesTree() {
   })
     .from(subcategories)
     .where(eq(subcategories.isActive, '1'))
-    .orderBy(asc(subcategories.sortOrder));
+    .orderBy(asc(subcategories.categoryId), asc(subcategories.sortOrder), asc(subcategories.name));
 
-  return allCategories.map(cat => ({
-    ...cat,
+  return allCategories.map((category) => ({
+    ...category,
     children: allSubcategories
-      .filter(sub => sub.categoryId === cat.id)
-      .map(sub => ({
+      .filter((sub) => sub.categoryId === category.id)
+      .map((sub) => ({
         id: sub.id,
         slug: sub.slug,
         name: sub.name,
@@ -50,7 +54,7 @@ async function listActiveCategories() {
   })
     .from(categories)
     .where(eq(categories.isActive, '1'))
-    .orderBy(asc(categories.sortOrder));
+    .orderBy(asc(categories.sortOrder), asc(categories.name));
 }
 
 async function listSubcategoriesByCategoryId(categoryId) {
@@ -66,11 +70,11 @@ async function listSubcategoriesByCategoryId(categoryId) {
       eq(subcategories.categoryId, categoryId),
       eq(subcategories.isActive, '1')
     ))
-    .orderBy(asc(subcategories.sortOrder));
+    .orderBy(asc(subcategories.sortOrder), asc(subcategories.name));
 }
 
 async function getCategoryBySlug(slug) {
-  const result = await db.select({
+  const rows = await db.select({
     id: categories.id,
     slug: categories.slug,
     name: categories.name,
@@ -83,11 +87,12 @@ async function getCategoryBySlug(slug) {
       eq(categories.slug, slug),
       eq(categories.isActive, '1')
     ));
-  return result[0] || null;
+
+  return rows[0] || null;
 }
 
 async function getSubcategoryBySlug(categoryId, slug) {
-  const result = await db.select({
+  const rows = await db.select({
     id: subcategories.id,
     categoryId: subcategories.categoryId,
     slug: subcategories.slug,
@@ -101,89 +106,12 @@ async function getSubcategoryBySlug(categoryId, slug) {
       eq(subcategories.slug, slug),
       eq(subcategories.isActive, '1')
     ));
-  return result[0] || null;
-}
 
-async function createCategory(input) {
-  const [created] = await db.insert(categories).values({
-    slug: input.slug,
-    name: input.name,
-    description: input.description || null,
-    sortOrder: input.sortOrder || 0,
-    isActive: input.isActive ? '1' : '0',
-  }).onDuplicateKeyUpdate({
-    slug: input.slug,
-    name: input.name,
-    description: input.description || null,
-    sortOrder: input.sortOrder || 0,
-    isActive: input.isActive ? '1' : '0',
-  });
-  return created;
-}
-
-async function updateCategory(id, input) {
-  const updates = {};
-  if (input.slug !== undefined) updates.slug = input.slug;
-  if (input.name !== undefined) updates.name = input.name;
-  if (input.description !== undefined) updates.description = input.description;
-  if (input.sortOrder !== undefined) updates.sortOrder = input.sortOrder;
-  if (input.isActive !== undefined) updates.isActive = input.isActive ? '1' : '0';
-
-  if (Object.keys(updates).length === 0) return null;
-
-  const [updated] = await db.update(categories)
-    .set(updates)
-    .where(eq(categories.id, id));
-  return updated;
-}
-
-async function deleteCategory(id) {
-  const [deleted] = await db.update(categories)
-    .set({ isActive: '0' })
-    .where(eq(categories.id, id));
-  return deleted;
-}
-
-async function createSubcategory(input) {
-  const [created] = await db.insert(subcategories).values({
-    categoryId: input.categoryId,
-    slug: input.slug,
-    name: input.name,
-    sortOrder: input.sortOrder || 0,
-    isActive: input.isActive ? '1' : '0',
-  }).onDuplicateKeyUpdate({
-    slug: input.slug,
-    name: input.name,
-    sortOrder: input.sortOrder || 0,
-    isActive: input.isActive ? '1' : '0',
-  });
-  return created;
-}
-
-async function updateSubcategory(id, input) {
-  const updates = {};
-  if (input.slug !== undefined) updates.slug = input.slug;
-  if (input.name !== undefined) updates.name = input.name;
-  if (input.sortOrder !== undefined) updates.sortOrder = input.sortOrder;
-  if (input.isActive !== undefined) updates.isActive = input.isActive ? '1' : '0';
-
-  if (Object.keys(updates).length === 0) return null;
-
-  const [updated] = await db.update(subcategories)
-    .set(updates)
-    .where(eq(subcategories.id, id));
-  return updated;
-}
-
-async function deleteSubcategory(id) {
-  const [deleted] = await db.update(subcategories)
-    .set({ isActive: '0' })
-    .where(eq(subcategories.id, id));
-  return deleted;
+  return rows[0] || null;
 }
 
 async function getCategoryById(id) {
-  const result = await db.select({
+  const rows = await db.select({
     id: categories.id,
     slug: categories.slug,
     name: categories.name,
@@ -193,11 +121,12 @@ async function getCategoryById(id) {
   })
     .from(categories)
     .where(eq(categories.id, id));
-  return result[0] || null;
+
+  return rows[0] || null;
 }
 
 async function getSubcategoryById(id) {
-  const result = await db.select({
+  const rows = await db.select({
     id: subcategories.id,
     categoryId: subcategories.categoryId,
     slug: subcategories.slug,
@@ -207,7 +136,87 @@ async function getSubcategoryById(id) {
   })
     .from(subcategories)
     .where(eq(subcategories.id, id));
-  return result[0] || null;
+
+  return rows[0] || null;
+}
+
+async function createCategory(input) {
+  const insertedIds = await db.insert(categories)
+    .values({
+      slug: input.slug,
+      name: input.name,
+      description: input.description || null,
+      sortOrder: input.sortOrder || 0,
+      isActive: toDbFlag(input.isActive !== undefined ? input.isActive : true),
+    })
+    .$returningId();
+
+  return insertedIds[0] || null;
+}
+
+async function updateCategory(id, input) {
+  const updates = {};
+
+  if (input.slug !== undefined) updates.slug = input.slug;
+  if (input.name !== undefined) updates.name = input.name;
+  if (input.description !== undefined) updates.description = input.description;
+  if (input.sortOrder !== undefined) updates.sortOrder = input.sortOrder;
+  if (input.isActive !== undefined) updates.isActive = toDbFlag(input.isActive);
+
+  if (!Object.keys(updates).length) return null;
+
+  await db.update(categories)
+    .set(updates)
+    .where(eq(categories.id, id));
+
+  return getCategoryById(id);
+}
+
+async function deleteCategory(id) {
+  await db.update(categories)
+    .set({ isActive: '0' })
+    .where(eq(categories.id, id));
+
+  return getCategoryById(id);
+}
+
+async function createSubcategory(input) {
+  const insertedIds = await db.insert(subcategories)
+    .values({
+      categoryId: input.categoryId,
+      slug: input.slug,
+      name: input.name,
+      sortOrder: input.sortOrder || 0,
+      isActive: toDbFlag(input.isActive !== undefined ? input.isActive : true),
+    })
+    .$returningId();
+
+  return insertedIds[0] || null;
+}
+
+async function updateSubcategory(id, input) {
+  const updates = {};
+
+  if (input.slug !== undefined) updates.slug = input.slug;
+  if (input.name !== undefined) updates.name = input.name;
+  if (input.sortOrder !== undefined) updates.sortOrder = input.sortOrder;
+  if (input.isActive !== undefined) updates.isActive = toDbFlag(input.isActive);
+
+  if (!Object.keys(updates).length) return null;
+
+  await db.update(subcategories)
+    .set(updates)
+    .where(eq(subcategories.id, id));
+
+  return getSubcategoryById(id);
+}
+
+async function deleteSubcategory(id) {
+  await db.update(subcategories)
+    .set({ isActive: '0' })
+    .where(eq(subcategories.id, id));
+
+  return getSubcategoryById(id);
 }
 
 module.exports = {

@@ -42,8 +42,8 @@ router.get('/', optionalAuth, async (req, res) => {
 
     // Sanitize all inputs
     const searchQuery   = sanitizeSearchQuery(rawQuery);
-    const category      = sanitizeString(rawCategory, 100);
-    const subcategory   = sanitizeString(rawSubcategory, 100);
+    const categorySlug    = sanitizeSlug(rawCategory);
+    const subcategorySlug = sanitizeSlug(rawSubcategory);
     const page          = sanitizeInt(rawPage, 1, 9999, 1);
     const pageSize      = sanitizeInt(rawLimit, 1, 50, 20);
     const offset        = (page - 1) * pageSize;
@@ -65,25 +65,59 @@ router.get('/', optionalAuth, async (req, res) => {
       params.push(searchQuery);
     }
 
-    if (category) {
-      conditions.push('a.category = ?');
-      params.push(category);
+    let selectedCategory = null;
+    let selectedSubcategory = null;
+
+    if (categorySlug) {
+      selectedCategory = await categoryRepo.getCategoryBySlug(categorySlug);
+
+      if (!selectedCategory) {
+        return res.json({ articles: [], total: 0, page, pageSize });
+      }
+
+      conditions.push('(a.category_id = ? OR (a.category_id IS NULL AND a.category = ?))');
+      params.push(selectedCategory.id, selectedCategory.name);
     }
 
-    if (subcategory) {
-      conditions.push('a.subcategory = ?');
-      params.push(subcategory);
+    if (subcategorySlug) {
+      if (!selectedCategory) {
+        return res.status(400).json({ error: 'No se puede filtrar por subcategoría sin categoría' });
+      }
+
+      selectedSubcategory = await categoryRepo.getSubcategoryBySlug(selectedCategory.id, subcategorySlug);
+
+      if (!selectedSubcategory) {
+        return res.json({ articles: [], total: 0, page, pageSize });
+      }
+
+      conditions.push('(a.subcategory_id = ? OR (a.subcategory_id IS NULL AND a.subcategory = ?))');
+      params.push(selectedSubcategory.id, selectedSubcategory.name);
     }
 
     const where = 'WHERE ' + conditions.join(' AND ');
 
     const [rows] = await db.query(
-      `SELECT a.id, a.slug, a.title, a.summary, a.status, a.category, a.subcategory, a.cover_image_id, a.tags,
-              a.views, a.created_at, a.updated_at,
-              u.username AS author_username,
-              (SELECT COUNT(*) FROM eu_media m WHERE m.article_id = a.id) AS image_count
+      `SELECT
+          a.id,
+          a.slug,
+          a.title,
+          a.summary,
+          a.status,
+          COALESCE(c.name, a.category) AS category,
+          COALESCE(sc.name, a.subcategory) AS subcategory,
+          COALESCE(c.slug, a.category) AS category_slug,
+          COALESCE(sc.slug, a.subcategory) AS subcategory_slug,
+          a.cover_image_id,
+          a.tags,
+          a.views,
+          a.created_at,
+          a.updated_at,
+          u.username AS author_username,
+          (SELECT COUNT(*) FROM eu_media m WHERE m.article_id = a.id) AS image_count
        FROM eu_articles a
        JOIN eu_users u ON a.author_id = u.id
+       LEFT JOIN eu_categories c ON c.id = a.category_id
+       LEFT JOIN eu_subcategories sc ON sc.id = a.subcategory_id
        ${where}
        ORDER BY a.${sort} DESC
        LIMIT ? OFFSET ?`,
@@ -161,14 +195,35 @@ router.get('/:slug', optionalAuth, async (req, res) => {
       : 'a.status = "APPROVED"';
 
     const [rows] = await db.query(
-      `SELECT a.id, a.slug, a.title, a.summary, a.content_path, a.status,
-              a.category, a.subcategory, a.cover_image_id, a.tags, a.views, a.version, a.created_at, a.updated_at,
-              a.rejection_reason,
-              u.username AS author_username, u.id AS author_id,
-              ru.username AS reviewer_username, a.reviewed_at
+      `SELECT
+          a.id,
+          a.slug,
+          a.title,
+          a.summary,
+          a.content_path,
+          a.status,
+          a.category_id,
+          a.subcategory_id,
+          COALESCE(c.name, a.category) AS category,
+          COALESCE(sc.name, a.subcategory) AS subcategory,
+          COALESCE(c.slug, a.category) AS category_slug,
+          COALESCE(sc.slug, a.subcategory) AS subcategory_slug,
+          a.cover_image_id,
+          a.tags,
+          a.views,
+          a.version,
+          a.created_at,
+          a.updated_at,
+          a.rejection_reason,
+          u.username AS author_username,
+          u.id AS author_id,
+          ru.username AS reviewer_username,
+          a.reviewed_at
        FROM eu_articles a
        JOIN eu_users u ON a.author_id = u.id
        LEFT JOIN eu_users ru ON a.reviewed_by = ru.id
+       LEFT JOIN eu_categories c ON c.id = a.category_id
+       LEFT JOIN eu_subcategories sc ON sc.id = a.subcategory_id
        WHERE a.slug = ? AND ${statusFilter}`,
       [slug]
     );
@@ -235,12 +290,29 @@ router.get('/:slug', optionalAuth, async (req, res) => {
       download_url: s.type === 'pdf' ? `/api/sources/pdf/${s.id}` : s.url
     }));
 
-    const [related] = await db.query(
-      `SELECT slug, title, summary FROM eu_articles
-       WHERE category = ? AND slug != ? AND status = "APPROVED"
-       ORDER BY views DESC LIMIT 5`,
-      [article.category || '', slug]
-    );
+    let related = [];
+
+    if (article.category_id) {
+      const [rowsRelated] = await db.query(
+        `SELECT slug, title, summary
+         FROM eu_articles
+         WHERE category_id = ? AND slug != ? AND status = "APPROVED"
+         ORDER BY views DESC
+         LIMIT 5`,
+        [article.category_id, slug]
+      );
+      related = rowsRelated;
+    } else if (article.category) {
+      const [rowsRelated] = await db.query(
+        `SELECT slug, title, summary
+         FROM eu_articles
+         WHERE category = ? AND slug != ? AND status = "APPROVED"
+         ORDER BY views DESC
+         LIMIT 5`,
+        [article.category, slug]
+      );
+      related = rowsRelated;
+    }
 
     res.json({
       ...article,
@@ -300,22 +372,22 @@ router.post('/', requireAuth, requireVerified, checkRateLimit('submit_article'),
         return res.status(400).json({ error: 'Categoría no encontrada' });
       }
     } else if (!categoryId && category) {
-      const categoryLower = category.toLowerCase();
-      const dbCategory = await categoryRepo.getCategoryBySlug(categoryLower);
+      const categorySlug = sanitizeSlug(category);
+      const subcategorySlug = sanitizeSlug(subcategory);
+
+      const dbCategory = categorySlug
+        ? await categoryRepo.getCategoryBySlug(categorySlug)
+        : null;
+
       if (dbCategory) {
         resolvedCategoryId = dbCategory.id;
-        if (subcategory) {
-          const dbSubcat = await categoryRepo.getSubcategoryBySlug(resolvedCategoryId, subcategory.toLowerCase());
+
+        if (subcategorySlug) {
+          const dbSubcat = await categoryRepo.getSubcategoryBySlug(dbCategory.id, subcategorySlug);
           if (dbSubcat) {
             resolvedSubcategoryId = dbSubcat.id;
           }
         }
-      }
-      if (!isValidSubcategory(category, subcategory)) {
-        const allowed = categoryLower ? SUBCATEGORY_RULES[categoryLower] : null;
-        return res.status(400).json({
-          error: `Subcategoría inválida para la categoría "${category}". Las subcategorías permitidas son: ${allowed ? allowed.join(', ') : ''}`
-        });
       }
     }
 
@@ -381,23 +453,23 @@ router.post('/:id/edit', requireAuth, requireVerified, checkRateLimit('edit_arti
       if (!subcat || subcat.categoryId !== categoryId) {
         return res.status(400).json({ error: 'La subcategoría no pertenece a la categoría especificada' });
       }
-    } else if (!categoryId && category) {
-      const categoryLower = category.toLowerCase();
-      const dbCategory = await categoryRepo.getCategoryBySlug(categoryLower);
+    } else if (!categoryId && !subcategoryId && category) {
+      const categorySlug = sanitizeSlug(category);
+      const subcategorySlug = sanitizeSlug(subcategory);
+
+      const dbCategory = categorySlug
+        ? await categoryRepo.getCategoryBySlug(categorySlug)
+        : null;
+
       if (dbCategory) {
         resolvedCategoryId = dbCategory.id;
-        if (subcategory) {
-          const dbSubcat = await categoryRepo.getSubcategoryBySlug(resolvedCategoryId, subcategory.toLowerCase());
+
+        if (subcategorySlug) {
+          const dbSubcat = await categoryRepo.getSubcategoryBySlug(dbCategory.id, subcategorySlug);
           if (dbSubcat) {
             resolvedSubcategoryId = dbSubcat.id;
           }
         }
-      }
-      if (!isValidSubcategory(category, subcategory)) {
-        const allowed = categoryLower ? SUBCATEGORY_RULES[categoryLower] : null;
-        return res.status(400).json({
-          error: `Subcategoría inválida para la categoría "${category}". Las subcategorías permitidas son: ${allowed ? allowed.join(', ') : ''}`
-        });
       }
     }
 

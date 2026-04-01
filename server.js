@@ -9,7 +9,7 @@ const path = require('path');
 const db = require('./config/db');
 const { cleanOldLogs } = require('./middleware/rateLimit');
 const { authLimiter, loginLimiter, tokenSanityCheck } = require('./middleware/securityLimiter');
-const { isBootstrapRequired } = require('./src/db/bootstrap');
+const { getBootstrapState } = require('./src/db/bootstrap');
 const { importLegacyData } = require('./src/db/legacyImporter');
 
 const app = express();
@@ -195,16 +195,27 @@ cron.schedule('5 0 1 * *', async () => {
 // ─── BOOTSTRAP COORDINATOR ─────────────────────────────────────────
 async function runBootstrap() {
   try {
-    const needsBootstrap = await isBootstrapRequired();
-    if (needsBootstrap) {
-      console.log('[BOOTSTRAP] Drizzle DB empty, starting legacy data import...');
+    const state = await getBootstrapState();
+
+    if (state.bootstrapRequired) {
+      console.log(
+        `[BOOTSTRAP] Legacy DB "${state.legacyDbName}" detected and Drizzle DB "${state.drizzleDbName}" is empty. Starting one-time import...`
+      );
+
       const result = await importLegacyData();
-      console.log('[BOOTSTRAP] Import completed:', result);
-    } else {
-      console.log('[BOOTSTRAP] Drizzle DB already initialized, skipping import');
+      console.log('[BOOTSTRAP] One-time import completed:', result);
+      return;
     }
+
+    if (state.legacyExists) {
+      console.log('[BOOTSTRAP] Drizzle DB already has data. Skipping legacy import.');
+      return;
+    }
+
+    console.log('[BOOTSTRAP] Legacy DB not found. Running with Drizzle DB only.');
   } catch (error) {
-    console.error('[BOOTSTRAP] Error during bootstrap:', error.message);
+    console.error('[BOOTSTRAP] Fatal bootstrap error:', error.message);
+    process.exit(1);
   }
 }
 
