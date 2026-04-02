@@ -16,11 +16,11 @@ async function resolveArticleTaxonomyInput({ categoryId, subcategoryId, category
   if (subcategoryId && !categoryId) {
     const sub = await categoriesRepo.getActiveSubcategoryById(subcategoryId);
     if (!sub) {
-      throw new Error('Subcategoría no encontrada');
+      return { category: null, subcategory: null, categoryId: null, subcategoryId: null };
     }
     const cat = await categoriesRepo.getActiveCategoryById(sub.categoryId);
     if (!cat) {
-      throw new Error('La categoría padre de la subcategoría no existe');
+      return { category: null, subcategory: null, categoryId: null, subcategoryId: null };
     }
     return { category: cat, subcategory: sub, categoryId: cat.id, subcategoryId: sub.id };
   }
@@ -32,10 +32,10 @@ async function resolveArticleTaxonomyInput({ categoryId, subcategoryId, category
     }
     const sub = await categoriesRepo.getActiveSubcategoryById(subcategoryId);
     if (!sub) {
-      throw new Error('Subcategoría no encontrada');
+      return { category: cat, subcategory: null, categoryId: cat.id, subcategoryId: null };
     }
     if (sub.categoryId !== categoryId) {
-      throw new Error('La subcategoría no pertenece a la categoría especificada');
+      return { category: cat, subcategory: null, categoryId: cat.id, subcategoryId: null };
     }
     return { category: cat, subcategory: sub, categoryId: cat.id, subcategoryId: sub.id };
   }
