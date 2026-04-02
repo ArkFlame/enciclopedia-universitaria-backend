@@ -81,7 +81,7 @@ async function resolveArticleTaxonomyInput({ categoryId, subcategoryId, category
     }
 
     if (categorySlug && !resolvedCategory) {
-      throw new Error(`Category "${category}" not found`);
+      throw new Error(`Categoría "${category}" no encontrada`);
     }
 
     return {
