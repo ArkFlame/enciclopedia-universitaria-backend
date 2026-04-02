@@ -5,10 +5,10 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "prestart": "npm run db:migrate",
     "dev": "nodemon server.js",
+    "test": "node --test",
     "cli": "node cli.js",
-    "db:pull": "drizzle-kit pull --init",
+    "db:pull": "drizzle-kit pull",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",

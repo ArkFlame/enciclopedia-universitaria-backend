@@ -80,28 +80,6 @@ CREATE TABLE IF NOT EXISTS `eu_subcategories` (
   CONSTRAINT `fk_eu_subcategories_category` FOREIGN KEY (`category_id`) REFERENCES `eu_categories`(`id`) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- eu_media before eu_articles (FK from eu_articles.cover_image_id references eu_media.id)
-CREATE TABLE IF NOT EXISTS `eu_media` (
-  `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  `article_id` INT UNSIGNED NULL,
-  `uploader_id` INT UNSIGNED NOT NULL,
-  `filename` VARCHAR(255) NOT NULL,
-  `original_name` VARCHAR(255) NOT NULL,
-  `mime_type` VARCHAR(100) NOT NULL,
-  `size_bytes` INT UNSIGNED NOT NULL,
-  `width` INT UNSIGNED NULL,
-  `height` INT UNSIGNED NULL,
-  `file_path` VARCHAR(500) NOT NULL,
-  `public_url` VARCHAR(500) NOT NULL,
-  `display_order` INT NOT NULL DEFAULT 0,
-  `file_size` BIGINT UNSIGNED DEFAULT 0,
-  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  INDEX `idx_eu_media_article` (`article_id`),
-  INDEX `idx_eu_media_uploader` (`uploader_id`),
-  CONSTRAINT `fk_eu_media_article` FOREIGN KEY (`article_id`) REFERENCES `eu_articles`(`id`) ON DELETE SET NULL,
-  CONSTRAINT `fk_eu_media_uploader` FOREIGN KEY (`uploader_id`) REFERENCES `eu_users`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- eu_articles (references eu_users for author and reviewer)
 CREATE TABLE IF NOT EXISTS `eu_articles` (
   `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -133,6 +111,28 @@ CREATE TABLE IF NOT EXISTS `eu_articles` (
   INDEX `idx_eu_articles_category` (`category`),
   CONSTRAINT `fk_eu_articles_author` FOREIGN KEY (`author_id`) REFERENCES `eu_users`(`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_eu_articles_reviewer` FOREIGN KEY (`reviewed_by`) REFERENCES `eu_users`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- eu_media after eu_articles because eu_media.article_id references eu_articles.id
+CREATE TABLE IF NOT EXISTS `eu_media` (
+  `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `article_id` INT UNSIGNED NULL,
+  `uploader_id` INT UNSIGNED NOT NULL,
+  `filename` VARCHAR(255) NOT NULL,
+  `original_name` VARCHAR(255) NOT NULL,
+  `mime_type` VARCHAR(100) NOT NULL,
+  `size_bytes` INT UNSIGNED NOT NULL,
+  `width` INT UNSIGNED NULL,
+  `height` INT UNSIGNED NULL,
+  `file_path` VARCHAR(500) NOT NULL,
+  `public_url` VARCHAR(500) NOT NULL,
+  `display_order` INT NOT NULL DEFAULT 0,
+  `file_size` BIGINT UNSIGNED DEFAULT 0,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_eu_media_article` (`article_id`),
+  INDEX `idx_eu_media_uploader` (`uploader_id`),
+  CONSTRAINT `fk_eu_media_article` FOREIGN KEY (`article_id`) REFERENCES `eu_articles`(`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_eu_media_uploader` FOREIGN KEY (`uploader_id`) REFERENCES `eu_users`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Add cover_image FK after eu_media exists

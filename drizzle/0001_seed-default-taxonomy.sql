@@ -4,16 +4,6 @@
 
 -- Seed categories
 INSERT INTO eu_categories (slug, name, color, description, sort_order, is_active) VALUES
-  ('ciencias-naturales', 'Ciencias Naturales', '#16a34a', NULL, 1, '1'),
-  ('historia', 'Historia', '#b45309', NULL, 2, '1'),
-  ('matematicas', 'Matemáticas', '#1d4ed8', NULL, 3, '1'),
-  ('tecnologia', 'Tecnología', '#7c3aed', NULL, 4, '1'),
-  ('fisica', 'Física', '#0891b2', NULL, 5, '1'),
-  ('quimica', 'Química', '#be123c', NULL, 6, '1'),
-  ('biologia', 'Biología', '#15803d', NULL, 7, '1'),
-  ('filosofia', 'Filosofía', '#6b21a8', NULL, 8, '1'),
-  ('arte-cultura', 'Arte y Cultura', '#c2410c', NULL, 9, '1'),
-  ('sociologia', 'Sociología', '#0369a1', NULL, 10, '1'),
   ('irp', 'IRP', '#ea580c', 'Introducción a la Resolución de Problemas', 11, '1'),
   ('ieu', 'IEU', '#0d9488', 'Introducción a los Estudios Universitarios', 12, '1'),
   ('icyt', 'ICYT', '#7c2d12', 'Introducción a las Ciencias y Tecnologías', 13, '1')

@@ -1,17 +1,18 @@
-require('dotenv').config();
 const mysql = require('mysql2/promise');
+const {
+  dbHost,
+  dbPort,
+  dbUser,
+  dbPassword,
+  drizzleDbName,
+} = require('../src/db/runtimeConfig');
 
-if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL is required');
-}
-
-const url = new URL(process.env.DATABASE_URL);
 const pool = mysql.createPool({
-  host: url.hostname,
-  port: parseInt(url.port) || 3306,
-  user: url.username,
-  password: url.password,
-  database: url.pathname.replace('/', ''),
+  host: dbHost,
+  port: dbPort,
+  user: dbUser,
+  password: dbPassword,
+  database: drizzleDbName,
   waitForConnections: true,
   connectionLimit: 20,
   queueLimit: 0,
