@@ -6,36 +6,36 @@ async function resolveArticleTaxonomyInput({ categoryId, subcategoryId, category
   }
 
   if (categoryId && !subcategoryId) {
-    const cat = await categoriesRepo.getCategoryById(categoryId);
+    const cat = await categoriesRepo.getActiveCategoryById(categoryId);
     if (!cat) {
-      throw new Error(`Category with id ${categoryId} not found`);
+      throw new Error('Categoría no encontrada');
     }
     return { category: cat, subcategory: null, categoryId: cat.id, subcategoryId: null };
   }
 
   if (subcategoryId && !categoryId) {
-    const sub = await categoriesRepo.getSubcategoryById(subcategoryId);
+    const sub = await categoriesRepo.getActiveSubcategoryById(subcategoryId);
     if (!sub) {
-      throw new Error(`Subcategory with id ${subcategoryId} not found`);
+      throw new Error('Subcategoría no encontrada');
     }
-    const cat = await categoriesRepo.getCategoryById(sub.categoryId);
+    const cat = await categoriesRepo.getActiveCategoryById(sub.categoryId);
     if (!cat) {
-      throw new Error(`Parent category for subcategory ${subcategoryId} not found`);
+      throw new Error('La categoría padre de la subcategoría no existe');
     }
     return { category: cat, subcategory: sub, categoryId: cat.id, subcategoryId: sub.id };
   }
 
   if (categoryId && subcategoryId) {
-    const cat = await categoriesRepo.getCategoryById(categoryId);
+    const cat = await categoriesRepo.getActiveCategoryById(categoryId);
     if (!cat) {
-      throw new Error(`Category with id ${categoryId} not found`);
+      throw new Error('Categoría no encontrada');
     }
-    const sub = await categoriesRepo.getSubcategoryById(subcategoryId);
+    const sub = await categoriesRepo.getActiveSubcategoryById(subcategoryId);
     if (!sub) {
-      throw new Error(`Subcategory with id ${subcategoryId} not found`);
+      throw new Error('Subcategoría no encontrada');
     }
     if (sub.categoryId !== categoryId) {
-      throw new Error(`Subcategory ${subcategoryId} does not belong to category ${categoryId}`);
+      throw new Error('La subcategoría no pertenece a la categoría especificada');
     }
     return { category: cat, subcategory: sub, categoryId: cat.id, subcategoryId: sub.id };
   }
