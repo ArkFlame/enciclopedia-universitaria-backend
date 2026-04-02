@@ -18,6 +18,7 @@ const subcategories = mysqlTable('eu_subcategories', {
   categoryId: int('category_id').notNull().references(() => categories.id, { onDelete: 'restrict' }),
   name: varchar('name', { length: 100 }).notNull(),
   slug: varchar('slug', { length: 100 }).notNull(),
+  description: text('description'),
   sortOrder: int('sort_order').notNull().default(0),
   isActive: mysqlEnum('is_active', ['0', '1']).notNull().default('1'),
   createdAt: timestamp('created_at').notNull().default(new Date()),

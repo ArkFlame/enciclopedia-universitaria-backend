@@ -10,7 +10,6 @@ const db = require('./config/db');
 const { cleanOldLogs } = require('./middleware/rateLimit');
 const { authLimiter, loginLimiter, tokenSanityCheck } = require('./middleware/securityLimiter');
 const { getBootstrapState } = require('./src/db/bootstrap');
-const { importLegacyData } = require('./src/db/legacyImporter');
 
 const app = express();
 const PORT = process.env.PORT || 3594;
@@ -195,26 +194,7 @@ cron.schedule('5 0 1 * *', async () => {
 // ─── BOOTSTRAP COORDINATOR ─────────────────────────────────────────
 async function runBootstrap() {
   const state = await getBootstrapState();
-
-  if (state.bootstrapRequired) {
-    console.log(
-      `[BOOTSTRAP] Legacy DB "${state.legacyDbName}" detected and Drizzle DB "${state.drizzleDbName}" is empty. Starting one-time import...`
-    );
-
-    const result = await importLegacyData();
-    console.log('[BOOTSTRAP] One-time import completed:', result);
-  } else if (state.legacyExists) {
-    console.log(
-      `[BOOTSTRAP] Legacy DB "${state.legacyDbName}" available but Drizzle DB already has data. Skipping legacy import.`
-    );
-  } else if (state.drizzleDataEmpty) {
-    console.log('[BOOTSTRAP] Legacy DB not found, Drizzle DB reseeded with defaults.');
-  } else {
-    console.log('[BOOTSTRAP] Running with Drizzle DB only.');
-  }
-
-  console.log(`[BOOTSTRAP] Drizzle database ready: "${state.drizzleDbName}"`);
-
+  console.log(`[BOOTSTRAP] Database ready: "${state.drizzleDbName}"`);
   return state;
 }
 
@@ -223,7 +203,7 @@ async function runBootstrap() {
   try {
     const state = await runBootstrap();
     await db.query('SELECT 1');
-    console.log(`[DB] Connection pool ready for Drizzle database "${db.runtimeDatabase}"`);
+    console.log(`[DB] Connection pool ready for database "${state.drizzleDbName}"`);
 
     app.listen(PORT, () => {
       console.log(`
@@ -231,11 +211,10 @@ async function runBootstrap() {
   ║      ENCICLOPEDIA UNIVERSITARIA - BACKEND        ║
   ║                                                  ║
   ║  🚀 Servidor: http://localhost:${PORT}            ║
-  ║  📊 MySQL: ${process.env.DB_HOST}:${db.runtimeDatabase}              ║
+  ║  📊 MySQL: ${process.env.DB_HOST}:${state.drizzleDbName}              ║
   ║  🌍 Frontend: ${process.env.FRONTEND_URL || 'no configurado'}
   ╚══════════════════════════════════════════════════╝
       `);
-      console.log(`[BOOTSTRAP] Runtime Drizzle database: "${state.drizzleDbName}"`);
     });
   } catch (error) {
     const sqlPreview = typeof error?.sql === 'string'

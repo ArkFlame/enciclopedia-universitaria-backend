@@ -5,8 +5,16 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "prestart": "npm run db:migrate",
     "dev": "nodemon server.js",
-    "cli": "node cli.js"
+    "cli": "node cli.js",
+    "db:pull": "drizzle-kit pull --init",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:check": "drizzle-kit check",
+    "db:studio": "drizzle-kit studio",
+    "db:adopt": "tsx scripts/adopt-baseline.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -31,6 +39,7 @@
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.10",
-    "nodemon": "^3.0.3"
+    "nodemon": "^3.0.3",
+    "tsx": "^4.21.0"
   }
 }

@@ -6,7 +6,10 @@ function toDbFlag(value) {
   return value === true || value === '1' ? '1' : '0';
 }
 
-async function listCategoriesTree() {
+async function listCategoriesTree({ includeInactive = false } = {}) {
+  const catCondition = includeInactive ? undefined : eq(categories.isActive, '1');
+  const subCondition = includeInactive ? undefined : eq(subcategories.isActive, '1');
+
   const allCategories = await db.select({
     id: categories.id,
     slug: categories.slug,
@@ -17,7 +20,7 @@ async function listCategoriesTree() {
     color: categories.color,
   })
     .from(categories)
-    .where(eq(categories.isActive, '1'))
+    .where(catCondition)
     .orderBy(asc(categories.sortOrder), asc(categories.name));
 
   const allSubcategories = await db.select({
@@ -25,11 +28,12 @@ async function listCategoriesTree() {
     categoryId: subcategories.categoryId,
     slug: subcategories.slug,
     name: subcategories.name,
+    description: subcategories.description,
     sortOrder: subcategories.sortOrder,
     isActive: subcategories.isActive,
   })
     .from(subcategories)
-    .where(eq(subcategories.isActive, '1'))
+    .where(subCondition)
     .orderBy(asc(subcategories.categoryId), asc(subcategories.sortOrder), asc(subcategories.name));
 
   return allCategories.map((category) => ({
@@ -38,11 +42,30 @@ async function listCategoriesTree() {
       .filter((sub) => sub.categoryId === category.id)
       .map((sub) => ({
         id: sub.id,
+        categoryId: sub.categoryId,
         slug: sub.slug,
         name: sub.name,
+        description: sub.description,
         sortOrder: sub.sortOrder,
+        isActive: sub.isActive,
       })),
   }));
+}
+
+async function listCategories({ includeInactive = false } = {}) {
+  const condition = includeInactive ? undefined : eq(categories.isActive, '1');
+  return db.select({
+    id: categories.id,
+    slug: categories.slug,
+    name: categories.name,
+    description: categories.description,
+    sortOrder: categories.sortOrder,
+    isActive: categories.isActive,
+    color: categories.color,
+  })
+    .from(categories)
+    .where(condition)
+    .orderBy(asc(categories.sortOrder), asc(categories.name));
 }
 
 async function listActiveCategories() {
@@ -60,19 +83,20 @@ async function listActiveCategories() {
     .orderBy(asc(categories.sortOrder), asc(categories.name));
 }
 
-async function listSubcategoriesByCategoryId(categoryId) {
+async function listSubcategoriesByCategoryId(categoryId, { includeInactive = false } = {}) {
+  const conditions = [eq(subcategories.categoryId, categoryId)];
+  if (!includeInactive) conditions.push(eq(subcategories.isActive, '1'));
   return db.select({
     id: subcategories.id,
     categoryId: subcategories.categoryId,
     slug: subcategories.slug,
     name: subcategories.name,
+    description: subcategories.description,
     sortOrder: subcategories.sortOrder,
+    isActive: subcategories.isActive,
   })
     .from(subcategories)
-    .where(and(
-      eq(subcategories.categoryId, categoryId),
-      eq(subcategories.isActive, '1')
-    ))
+    .where(and(...conditions))
     .orderBy(asc(subcategories.sortOrder), asc(subcategories.name));
 }
 
@@ -101,6 +125,7 @@ async function getSubcategoryBySlug(categoryId, slug) {
     categoryId: subcategories.categoryId,
     slug: subcategories.slug,
     name: subcategories.name,
+    description: subcategories.description,
     sortOrder: subcategories.sortOrder,
     isActive: subcategories.isActive,
   })
@@ -136,6 +161,7 @@ async function getSubcategoryById(id) {
     categoryId: subcategories.categoryId,
     slug: subcategories.slug,
     name: subcategories.name,
+    description: subcategories.description,
     sortOrder: subcategories.sortOrder,
     isActive: subcategories.isActive,
   })
@@ -151,6 +177,7 @@ async function getSubcategoryByAnySlug(slug) {
     categoryId: subcategories.categoryId,
     slug: subcategories.slug,
     name: subcategories.name,
+    description: subcategories.description,
     sortOrder: subcategories.sortOrder,
     isActive: subcategories.isActive,
   })
@@ -199,6 +226,7 @@ async function getActiveSubcategoryById(id) {
     categoryId: subcategories.categoryId,
     slug: subcategories.slug,
     name: subcategories.name,
+    description: subcategories.description,
     sortOrder: subcategories.sortOrder,
     isActive: subcategories.isActive,
   })
@@ -271,6 +299,7 @@ async function findActiveSubcategoriesByLegacyToken(token) {
     categoryId: subcategories.categoryId,
     slug: subcategories.slug,
     name: subcategories.name,
+    description: subcategories.description,
     sortOrder: subcategories.sortOrder,
     isActive: subcategories.isActive,
   })
@@ -287,6 +316,7 @@ async function findActiveSubcategoriesByLegacyToken(token) {
     categoryId: subcategories.categoryId,
     slug: subcategories.slug,
     name: subcategories.name,
+    description: subcategories.description,
     sortOrder: subcategories.sortOrder,
     isActive: subcategories.isActive,
   })
@@ -305,6 +335,7 @@ async function findActiveSubcategoryByLegacyTokenWithinCategory(categoryId, toke
     categoryId: subcategories.categoryId,
     slug: subcategories.slug,
     name: subcategories.name,
+    description: subcategories.description,
     sortOrder: subcategories.sortOrder,
     isActive: subcategories.isActive,
   })
@@ -322,6 +353,7 @@ async function findActiveSubcategoryByLegacyTokenWithinCategory(categoryId, toke
     categoryId: subcategories.categoryId,
     slug: subcategories.slug,
     name: subcategories.name,
+    description: subcategories.description,
     sortOrder: subcategories.sortOrder,
     isActive: subcategories.isActive,
   })
@@ -383,6 +415,7 @@ async function createSubcategory(input) {
       categoryId: input.categoryId,
       slug: input.slug,
       name: input.name,
+      description: input.description || null,
       sortOrder: input.sortOrder || 0,
       isActive: toDbFlag(input.isActive !== undefined ? input.isActive : true),
     })
@@ -396,6 +429,7 @@ async function updateSubcategory(id, input) {
 
   if (input.slug !== undefined) updates.slug = input.slug;
   if (input.name !== undefined) updates.name = input.name;
+  if (input.description !== undefined) updates.description = input.description;
   if (input.sortOrder !== undefined) updates.sortOrder = input.sortOrder;
   if (input.isActive !== undefined) updates.isActive = toDbFlag(input.isActive);
 
@@ -444,6 +478,7 @@ async function reorderSubcategories(orderedIds) {
 
 module.exports = {
   listCategoriesTree,
+  listCategories,
   listActiveCategories,
   listSubcategoriesByCategoryId,
   getCategoryBySlug,

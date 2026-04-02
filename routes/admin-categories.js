@@ -4,10 +4,48 @@ const { requireAuth, requireMod, requireAdmin } = require('../middleware/auth');
 const { sanitizeString, sanitizeSlug, sanitizeInt } = require('../utils/sanitize');
 const categoriesRepo = require('../src/repositories/categories');
 
+function parseIsActive(value) {
+  if (value === undefined) return true;
+  return value === true || value === '1' || value === 1;
+}
+
+function fromDbFlag(value) {
+  return value === '1' || value === 1 || value === true;
+}
+
+function mapCategoryDto(cat) {
+  if (!cat) return null;
+  return {
+    id: cat.id,
+    slug: cat.slug,
+    name: cat.name,
+    description: cat.description,
+    sortOrder: cat.sortOrder,
+    isActive: fromDbFlag(cat.isActive),
+    color: cat.color,
+  };
+}
+
+function mapSubcategoryDto(sub) {
+  if (!sub) return null;
+  return {
+    id: sub.id,
+    categoryId: sub.categoryId,
+    slug: sub.slug,
+    name: sub.name,
+    description: sub.description,
+    sortOrder: sub.sortOrder,
+    isActive: fromDbFlag(sub.isActive),
+  };
+}
+
 router.get('/categories/tree', requireAuth, requireMod, async (req, res) => {
   try {
-    const tree = await categoriesRepo.listCategoriesTree();
-    res.json(tree);
+    const tree = await categoriesRepo.listCategoriesTree({ includeInactive: true });
+    res.json(tree.map(cat => ({
+      ...mapCategoryDto(cat),
+      children: (cat.children || []).map(mapSubcategoryDto),
+    })));
   } catch (err) {
     console.error('GET /admin/categories/tree:', err);
     res.status(500).json({ error: 'Error al obtener árbol de categorías' });
@@ -16,8 +54,8 @@ router.get('/categories/tree', requireAuth, requireMod, async (req, res) => {
 
 router.get('/categories', requireAuth, requireMod, async (req, res) => {
   try {
-    const categories = await categoriesRepo.listActiveCategories();
-    res.json(categories);
+    const categories = await categoriesRepo.listCategories({ includeInactive: true });
+    res.json(categories.map(mapCategoryDto));
   } catch (err) {
     console.error('GET /admin/categories:', err);
     res.status(500).json({ error: 'Error al obtener categorías' });
@@ -32,7 +70,7 @@ router.post('/categories', requireAuth, requireAdmin, async (req, res) => {
     const cleanName = sanitizeString(name, 200);
     const cleanDesc = description ? sanitizeString(description, 2000) : '';
     const cleanOrder = sanitizeInt(sortOrder, 0, 9999, 0);
-    const active = isActive === true || isActive === 'true';
+    const active = parseIsActive(isActive);
     const cleanColor = /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#000000';
 
     if (!cleanSlug) return res.status(400).json({ error: 'Slug inválido' });
@@ -82,7 +120,7 @@ router.patch('/categories/:id', requireAuth, requireAdmin, async (req, res) => {
       updates.sortOrder = sanitizeInt(sortOrder, 0, 9999, 0);
     }
     if (isActive !== undefined) {
-      updates.isActive = isActive === true || isActive === 'true';
+      updates.isActive = parseIsActive(isActive);
     }
     if (color !== undefined) {
       if (/^#[0-9a-fA-F]{6}$/.test(color)) updates.color = color;
@@ -143,8 +181,8 @@ router.get('/categories/:id/subcategories', requireAuth, requireMod, async (req,
     const id = sanitizeInt(req.params.id, 1, 999999999);
     if (!id) return res.status(400).json({ error: 'ID inválido' });
 
-    const subcategories = await categoriesRepo.listSubcategoriesByCategoryId(id);
-    res.json(subcategories);
+    const subcategories = await categoriesRepo.listSubcategoriesByCategoryId(id, { includeInactive: true });
+    res.json(subcategories.map(mapSubcategoryDto));
   } catch (err) {
     console.error('GET /admin/categories/:id/subcategories:', err);
     res.status(500).json({ error: 'Error al obtener subcategorías' });
@@ -153,13 +191,14 @@ router.get('/categories/:id/subcategories', requireAuth, requireMod, async (req,
 
 router.post('/subcategories', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { categoryId, slug, name, sortOrder, isActive } = req.body;
+    const { categoryId, slug, name, description, sortOrder, isActive } = req.body;
 
     const cleanCatId = sanitizeInt(categoryId, 1, 999999999);
     const cleanSlug = sanitizeSlug(slug);
     const cleanName = sanitizeString(name, 200);
+    const cleanDesc = description ? sanitizeString(description, 2000) : '';
     const cleanOrder = sanitizeInt(sortOrder, 0, 9999, 0);
-    const active = isActive === true || isActive === 'true';
+    const active = parseIsActive(isActive);
 
     if (!cleanCatId) return res.status(400).json({ error: 'ID de categoría inválido' });
     if (!cleanSlug) return res.status(400).json({ error: 'Slug inválido' });
@@ -172,6 +211,7 @@ router.post('/subcategories', requireAuth, requireAdmin, async (req, res) => {
       categoryId: cleanCatId,
       slug: cleanSlug,
       name: cleanName,
+      description: cleanDesc || null,
       sortOrder: cleanOrder,
       isActive: active,
     });
@@ -191,7 +231,7 @@ router.patch('/subcategories/:id', requireAuth, requireAdmin, async (req, res) =
     const existing = await categoriesRepo.getSubcategoryById(id);
     if (!existing) return res.status(404).json({ error: 'Subcategoría no encontrada' });
 
-    const { slug, name, sortOrder, isActive } = req.body;
+    const { slug, name, description, sortOrder, isActive } = req.body;
     const updates = {};
 
     if (slug !== undefined) {
@@ -204,11 +244,14 @@ router.patch('/subcategories/:id', requireAuth, requireAdmin, async (req, res) =
       if (!cleanName) return res.status(400).json({ error: 'Nombre inválido' });
       updates.name = cleanName;
     }
+    if (description !== undefined) {
+      updates.description = sanitizeString(description, 2000) || null;
+    }
     if (sortOrder !== undefined) {
       updates.sortOrder = sanitizeInt(sortOrder, 0, 9999, 0);
     }
     if (isActive !== undefined) {
-      updates.isActive = isActive === true || isActive === 'true';
+      updates.isActive = parseIsActive(isActive);
     }
 
     if (Object.keys(updates).length === 0) {
@@ -255,7 +298,7 @@ router.put('/categories/:id/subcategories/reorder', requireAuth, requireAdmin, a
       return clean;
     });
 
-    const subcats = await categoriesRepo.listSubcategoriesByCategoryId(categoryId);
+    const subcats = await categoriesRepo.listSubcategoriesByCategoryId(categoryId, { includeInactive: true });
     const subcatIds = new Set(subcats.map(s => s.id));
     for (const id of validated) {
       if (!subcatIds.has(id)) {

@@ -4,11 +4,18 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }
 
 const mysql = require('mysql2/promise');
 
+if (!process.env.DATABASE_URL) {
+  console.error('DATABASE_URL is required');
+  process.exit(1);
+}
+
+const url = new URL(process.env.DATABASE_URL);
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'password',
-  database: process.env.DRIZZLE_DB_NAME || 'enciclopediadb_drizzle',
+  host: url.hostname,
+  port: parseInt(url.port) || 3306,
+  user: url.username,
+  password: url.password,
+  database: url.pathname.replace('/', ''),
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
